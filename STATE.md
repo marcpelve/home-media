@@ -20,12 +20,22 @@ Full design: PLAN.md. This file tracks multi-session progress.
   requires it for the resource file) and fixed .gitignore for desktop/target.
 - (2026-11-08) P1: TMDB metadata merged to main (commit e0778ac). TmdbClient
   (Bearer auth, SQLite cache with day-level TTLs, in-flight de-dupe, poster
-  disk-caching) + /tmdb router (search, home, categories, title, reviews,
+  poster disk-caching) + /tmdb router (search, home, categories, title, reviews,
   poster). Added tmdb_cache table and 7 MockTransport tests (no real API).
   All 11 tests pass.
+- (2026-11-08) P2: Cocoscrapers standalone merged to main (commit 3199a14).
+  Vendored the full Cocoscrapers package UNTOUCHED into
+  backend/app/coco/cocoscrapers/ (64 .py). kodi_stub.py fakes xbmc/xbmcgui/
+  xbmcaddon/xbmcvfs (pre-seeds all provider.* settings to 'true', in-memory
+  window property, writable profile dir) PLUS a urllib3 DEFAULT_CIPHERS shim
+  (cfscrape breaks on 3.14's modern urllib3). coco_driver.py builds the real
+  data dict, calls every enabled source, dedupes by hash (case-normalized),
+  ranks by quality>seeders>size, and is defensive about None/non-dict/numeric
+  results. POST /sources/{tmdb_id} router fetches TMDB details then scrapes
+  via asyncio.to_thread. 35 new tests (46 total pass). Real no-Kodi e2e: The
+  Matrix 1999 -> 192 ranked sources, Breaking Bad S01E01 -> 84.
 
 ## Next
-- P2: Cocoscrapers standalone (kodi_stub) + sources endpoints.
 - P3: mpv playback + Trakt/local tracking.
 - (deferred) Tauri sidecar/process management - let the Tauri app own the
   backend lifecycle instead of starting it separately.
@@ -64,8 +74,14 @@ Full design: PLAN.md. This file tracks multi-session progress.
 ## Blockers / notes
 - Tauri CLI installed (npm -g @tauri-apps/cli, v2.12.4) and on PATH.
 - Trakt client_secret not yet provided by user (needed for P4).
-- Python is 3.14, not the 3.11 the plan assumed - verify native deps (cfscrape,
-  pyaes) install cleanly on 3.14 when P1 lands.
+- Python is 3.14 (not the 3.11 the plan assumed). RESOLVED in P2: pyaes
+  installs fine; cfscrape (pip AND the bundled copy) breaks on 3.14's modern
+  urllib3 (removed DEFAULT_CIPHERS) - fixed with a shim in kodi_stub.py that
+  restores DEFAULT_CIPHERS before import. cfscrape is only ever imported as the
+  bundled submodule (cocoscrapers.modules.cfscrape), so no top-level cfscrape
+  is needed (the broken pip one was uninstalled).
+- P2 worktree C:/ai/repos/home-media-p2 (branch p2/cocoscrapers) is merged; the
+  venv (fastapi+httpx+pytest+pyaes) lives there. Remove with `git worktree remove`.
 - P0a worktree C:/ai/repos/home-media-p0a (branch p0a/backend-scaffold) is merged;
   can be removed with `git worktree remove`.
 - P1 worktree C:/ai/repos/home-media-p1 (branch p1/tmdb) is merged; the venv
