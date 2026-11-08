@@ -1,0 +1,38 @@
+# ============================================================
+# home-media .gitignore
+# Secrets and runtime data must NEVER be committed.
+# ============================================================
+
+# Secrets / local config
+.env
+.env.*
+config/
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build / packaging (PyInstaller + Tauri)
+dist/
+build/
+*.exe
+backend/dist/
+frontend/src-tauri/target/
+frontend/dist/
+
+# Node
+node_modules/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
