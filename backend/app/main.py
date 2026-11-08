@@ -11,8 +11,12 @@ from fastapi import FastAPI
 from app.config import load_config
 from app.db import init_db
 from app.tmdb import TmdbClient
+from app.torbox import TorboxClient
+from app.downloads import DownloadManager
 from app.routers.tmdb import router as tmdb_router
 from app.routers.sources import router as sources_router
+from app.routers.torbox import router as torbox_router
+from app.routers.downloads import router as downloads_router
 
 # Load config at import; the DB path drives startup init. Secrets here are
 # only read, never logged.
@@ -30,14 +34,23 @@ async def lifespan(app: FastAPI):
         db_path=_config.db_path,
         poster_dir=poster_dir,
     )
-    async with app.state.tmdb_client:
+    # Torbox debrid client + download manager, stored for the /sources and
+    # /downloads routers.
+    app.state.torbox_client = TorboxClient(
+        api_key=_config.torbox_api_key, db_path=_config.db_path
+    )
+    app.state.downloads = DownloadManager(
+        db_path=_config.db_path, dest_dir=_config.download_dir or None
+    )
+    async with app.state.tmdb_client, app.state.torbox_client, app.state.downloads:
         yield
-    await app.state.tmdb_client.close()
 
 
 app = FastAPI(title="home-media", lifespan=lifespan)
 app.include_router(tmdb_router)
 app.include_router(sources_router)
+app.include_router(torbox_router)
+app.include_router(downloads_router)
 
 
 @app.get("/health")
