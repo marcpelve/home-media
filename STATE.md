@@ -12,13 +12,19 @@ Full design: PLAN.md. This file tracks multi-session progress.
   /health, .env loader (secrets never logged), 8-table SQLite schema created on
   startup via lifespan, mpv JSON-IPC stub (lands P3), requirements.txt. 3 pytest
   tests pass; /health returns 200; data/home_media.db created on boot.
+- (2026-11-08) P0b: Tauri v2 desktop shell merged to main (commit 0d64271).
+  Tauri app in desktop/ (vanilla frontend): a minimal shell that probes
+  http://127.0.0.1:8790/health and shows backend status, plus Rust entry points
+  and tauri.conf.json. Frontend builds to dist/; Rust side compiles (cargo
+  build, dev profile, 13 MB desktop.exe). Added icon.ico (Tauri on Windows
+  requires it for the resource file) and fixed .gitignore for desktop/target.
 
 ## Next
-- P0b: Tauri shell - native window + sidecar/process management. Needs Tauri
-  CLI installed (not present yet).
 - P1: TMDB metadata (search, home, categories, poster cache).
 - P2: Cocoscrapers standalone (kodi_stub) + sources endpoints.
 - P3: mpv playback + Trakt/local tracking.
+- (deferred) Tauri sidecar/process management - let the Tauri app own the
+  backend lifecycle instead of starting it separately.
 
 ## Decisions
 - TMDB auth: v4 Read Access Token via `Authorization: *** header (not the v3
@@ -40,10 +46,14 @@ Full design: PLAN.md. This file tracks multi-session progress.
   PID and the run, then verified (pytest, /health, DB) and committed/merged
   myself. Lesson: a task spec that starts a server must say "start it in the
   background and kill it after checking".
+- P0b `cargo build` compiled all 445 deps then failed at the end: Tauri on
+  Windows requires `icons/icon.ico` (the scaffold only made icon.png). Wrapped
+  the PNG in a valid ICO container (PNG-in-ICO) and re-ran - deps were cached,
+  so the re-build was 18s. The native build needs the MSVC env sourced
+  (vcvars64.bat); drive it via a .bat file, not a bare `cargo build`.
 
 ## Blockers / notes
-- Tauri CLI not installed (needed for P0b). Options: `npm create tauri-app`
-  (pulls the CLI) or `cargo install tauri-cli`.
+- Tauri CLI installed (npm -g @tauri-apps/cli, v2.12.4) and on PATH.
 - Trakt client_secret not yet provided by user (needed for P4).
 - Python is 3.14, not the 3.11 the plan assumed - verify native deps (cfscrape,
   pyaes) install cleanly on 3.14 when P1 lands.
