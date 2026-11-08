@@ -1,57 +1,284 @@
 """mpv JSON-IPC wrapper.
 
-Spawns mpv with --input-ipc-server=<socket> and communicates via
-JSON commands over a local Unix/Named socket.
+Spawns mpv with --input-ipc-server pointing at a Windows pipe name, and talks
+to it with newline-delimited JSON: send {"command": [...], "request_id": N},
+receive {"request_id": N, "error": "success", ...}.
 
-Real IPC implementation lands in P3. This stub is importable and
-unit-testable without mpv installed.
+Commands are request/response and are issued one at a time by the caller, so
+all pipe I/O is serialized in the calling thread (concurrent sync read+write on
+one named-pipe handle is not allowed on Windows). Reads use overlapped I/O so
+each read has a timeout: mpv's IPC is single-threaded and can be busy for a
+while (file load, seek), and it also interleaves unsolicited event lines
+(start-file, file-loaded, ...) with replies, so a reply can arrive a read late.
+command() therefore keeps reading until it gets the line carrying its own
+request_id, buffering anything else as an event. A dead mpv yields EOF.
+
+The OS pipe sits behind a transport seam so the routing can be unit-tested
+with an in-memory transport; the real-binary path is e2e_mpv.py.
 """
+
+from __future__ import annotations
+
+import ctypes
+import json
+import os
+import shutil
+import subprocess
+import time
+from collections import deque
+from ctypes import wintypes
+from typing import Protocol
+
+_k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+_k32.CreateFileW.restype = wintypes.HANDLE
+_k32.CreateFileW.argtypes = [
+    wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+    wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+]
+_k32.CreateEventW.restype = wintypes.HANDLE
+_k32.CreateEventW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.BOOL,
+                              wintypes.LPCWSTR]
+_k32.WaitForSingleObject.restype = wintypes.DWORD
+_k32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+_k32.GetOverlappedResult.restype = wintypes.BOOL
+_k32.GetOverlappedResult.argtypes = [wintypes.HANDLE, ctypes.c_void_p,
+                                     wintypes.LPDWORD, wintypes.BOOL]
+_k32.CancelSynchronousIo.restype = wintypes.BOOL
+_k32.CancelSynchronousIo.argtypes = [wintypes.HANDLE]
+_k32.ResetEvent.restype = wintypes.BOOL
+_k32.ResetEvent.argtypes = [wintypes.HANDLE]
+_k32.ReadFile.argtypes = [
+    wintypes.HANDLE, wintypes.LPVOID, wintypes.DWORD, wintypes.LPDWORD,
+    ctypes.c_void_p,
+]
+_k32.WriteFile.argtypes = [
+    wintypes.HANDLE, wintypes.LPVOID, wintypes.DWORD, wintypes.LPDWORD,
+    ctypes.c_void_p,
+]
+_k32.CloseHandle.restype = wintypes.BOOL
+_k32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+_INVALID_HANDLE = (1 << 64) - 1
+_GENERIC_READ = 0x80000000
+_GENERIC_WRITE = 0x40000000
+_OPEN_EXISTING = 3
+_FILE_FLAG_OVERLAPPED = 0x40000000
+_WAIT_TIMEOUT = 0x00000102
+_READ_CHUNK = 65536
+
+
+class _OVERLAPPED(ctypes.Structure):
+    _fields_ = [
+        ("Internal", ctypes.c_void_p),
+        ("InternalHigh", wintypes.DWORD),
+        ("Offset", wintypes.DWORD),
+        ("OffsetHigh", wintypes.DWORD),
+        ("hEvent", wintypes.HANDLE),
+    ]
+
+
+class MpvError(RuntimeError):
+    """Raised when mpv replies with an error, times out, or IPC fails."""
+
+
+def default_mpv_path() -> str:
+    found = shutil.which("mpv")
+    if found:
+        return found
+    local = "C:/ai/mpv/mpv.exe"
+    if os.path.exists(local):
+        return local
+    return "mpv"
+
+
+class Transport(Protocol):
+    """Byte-line transport MpvClient talks over (named pipe, or a test fake)."""
+
+    def connect(self) -> None: ...
+    def write(self, data: bytes) -> None: ...
+    def read_line(self, timeout: float) -> bytes | None: ...
+    def close(self) -> None: ...
+
+
+class PipeTransport:
+    """Windows named-pipe transport: blocking writes, timed overlapped reads."""
+
+    def __init__(self, pipe_path: str) -> None:
+        self._pipe_path = pipe_path
+        self._handle: wintypes.HANDLE | None = None
+        self._buf = b""
+
+    def connect(self) -> None:
+        for _ in range(100):
+            h = _k32.CreateFileW(
+                self._pipe_path, _GENERIC_READ | _GENERIC_WRITE, 0, None,
+                _OPEN_EXISTING, _FILE_FLAG_OVERLAPPED, None,
+            )
+            if h is not None and h != _INVALID_HANDLE:
+                self._handle = h
+                break
+            time.sleep(0.1)
+        if self._handle is None:
+            raise MpvError(f"could not open IPC pipe {self._pipe_path}")
+
+    def _read_once(self, timeout: float) -> bytes | None:
+        # A fresh event per read: reusing one across reads corrupted state.
+        ev = _k32.CreateEventW(None, True, False, None)
+        buf = ctypes.create_string_buffer(_READ_CHUNK)
+        ovl = _OVERLAPPED()
+        ovl.hEvent = ev
+        got = wintypes.DWORD()
+        _k32.ReadFile(self._handle, buf, _READ_CHUNK, ctypes.byref(got),
+                      ctypes.byref(ovl))
+        rc = _k32.WaitForSingleObject(ev, max(int(timeout * 1000), 0))
+        if rc == _WAIT_TIMEOUT:
+            _k32.CancelSynchronousIo(self._handle)
+            _k32.CloseHandle(ev)
+            return None
+        _k32.GetOverlappedResult(self._handle, ctypes.byref(ovl),
+                                 ctypes.byref(got), False)
+        _k32.CloseHandle(ev)
+        if got.value == 0:
+            return b""
+        return buf.raw[: got.value]
+
+    def read_line(self, timeout: float) -> bytes | None:
+        acc = self._buf
+        while True:
+            chunk = self._read_once(timeout)
+            if chunk is None or chunk == b"":
+                self._buf = acc
+                return None
+            acc += chunk
+            if b"\n" in acc:
+                line, rest = acc.split(b"\n", 1)
+                self._buf = rest
+                return line
+
+    def write(self, data: bytes) -> None:
+        sent = wintypes.DWORD()
+        off = 0
+        while off < len(data):
+            ok = _k32.WriteFile(self._handle, data[off:], len(data) - off,
+                                ctypes.byref(sent), None)
+            if not ok or sent.value == 0:
+                raise MpvError("failed writing to the mpv IPC pipe")
+            off += sent.value
+
+    def close(self) -> None:
+        if self._handle is not None:
+            _k32.CloseHandle(self._handle)
+            self._handle = None
 
 
 class MpvClient:
-    """Thin wrapper around an mpv child process using JSON IPC.
+    """Thin wrapper around an mpv child process using JSON IPC."""
 
-    Protocol: send JSON lines like {"command": ["load", url]} to the socket,
-    receive JSON lines like {"event": "property-change", "data": {...}}.
-    """
+    def __init__(
+        self,
+        mpv_path: str = "",
+        socket_name: str = "",
+        extra_args: list[str] | None = None,
+        transport: Transport | None = None,
+    ) -> None:
+        self._mpv_path = mpv_path or default_mpv_path()
+        self._socket_name = socket_name or f"hm-mpv-{os.getpid()}"
+        self._pipe_path = f"\\\\.\\pipe\\{self._socket_name}"
+        self._extra_args = list(extra_args or [])
+        self._transport = transport or PipeTransport(self._pipe_path)
+        self._proc: subprocess.Popen | None = None
+        self._running = False
+        self._next_id = 0
+        self._events: deque = deque()
 
-    def __init__(self, socket_path: str = "") -> None:
-        self._socket_path = socket_path
-        self._conn = None  # socket connection, set in start()
+    def start(self, spawn: bool = True) -> None:
+        if self._running:
+            return
+        if spawn:
+            self._spawn_process()
+        self._transport.connect()
+        self._running = True
 
-    def start(self, socket_path: str = "") -> None:
-        """Spawn mpv with --input-ipc-server=<socket_path>.
+    def ensure_running(self) -> None:
+        if self._running and self.is_alive():
+            return
+        self.stop()
+        self.start()
 
-        P3: subprocess.Popen(["mpv", "--input-ipc-server", socket_path, ...])
-        """
-        if socket_path:
-            self._socket_path = socket_path
-        raise NotImplementedError("mpv spawn lands in P3")
+    def is_alive(self) -> bool:
+        if self._proc is not None:
+            return self._proc.poll() is None
+        return self._running
+
+    def stop(self) -> None:
+        self._running = False
+        if self._proc is not None:
+            try:
+                self.command(["quit"], timeout=5)
+            except Exception:
+                pass
+        self._transport.close()
+        if self._proc is not None:
+            try:
+                self._proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._proc.kill()
+            self._proc = None
+
+    def _spawn_process(self) -> None:
+        self._proc = subprocess.Popen(
+            [self._mpv_path, "--idle",
+             f"--input-ipc-server={self._pipe_path}", *self._extra_args],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+    def command(self, cmd: list, timeout: float = 10.0) -> dict:
+        self._next_id += 1
+        rid = self._next_id
+        data = (json.dumps({"command": cmd, "request_id": rid}) + "\n").encode()
+        self._transport.write(data)
+        while True:
+            line = self._transport.read_line(timeout)
+            if line is None:
+                raise MpvError(f"mpv command timed out: {cmd}")
+            msg = json.loads(line)
+            if msg.get("request_id") == rid:
+                return msg
+            self._events.append(msg)
 
     def play(self, url_or_path: str) -> None:
-        """Load and play a URL (online) or local file path (offline).
-
-        P3: send {"command": ["loadfile", url_or_path, "replace"]}
-        """
-        raise NotImplementedError("mpv play lands in P3")
+        self.command(["loadfile", url_or_path, "replace"])
 
     def set_position(self, seconds: float) -> None:
-        """Seek to the given position in seconds.
+        self.command(["set_property", "time-pos", seconds])
 
-        P3: send {"command": ["set_property", "time-pos", seconds]}
-        """
-        raise NotImplementedError("mpv set_position lands in P3")
+    def get_property(self, name: str):
+        reply = self.command(["get_property", name])
+        if reply.get("error") != "success":
+            raise MpvError(str(reply.get("error", "unknown error")))
+        return reply.get("data")
 
-    def get_property(self, name: str) -> object:
-        """Query an mpv property (e.g. 'time-pos', 'duration', 'pause').
+    def pause(self) -> None:
+        self.command(["set_property", "pause", True])
 
-        P3: send {"command": ["get_property", name]}, await reply.
-        """
-        raise NotImplementedError("mpv get_property lands in P3")
+    def resume(self) -> None:
+        self.command(["set_property", "pause", False])
 
-    def quit(self) -> None:
-        """Send quit command and wait for the process to exit.
+    def read_position(self) -> dict:
+        def _p(name: str):
+            try:
+                return self.get_property(name)
+            except MpvError:
+                return None
 
-        P3: send {"command": ["quit"]}, then proc.wait()
-        """
-        raise NotImplementedError("mpv quit lands in P3")
+        return {
+            "time_pos": _p("time-pos"),
+            "duration": _p("duration"),
+            "pause": _p("pause"),
+        }
+
+    def drain_events(self) -> list[dict]:
+        out = list(self._events)
+        self._events.clear()
+        return out
