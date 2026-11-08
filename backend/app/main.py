@@ -12,6 +12,7 @@ from app.config import load_config
 from app.db import init_db
 from app.tmdb import TmdbClient
 from app.routers.tmdb import router as tmdb_router
+from app.routers.sources import router as sources_router
 
 # Load config at import; the DB path drives startup init. Secrets here are
 # only read, never logged.
@@ -36,6 +37,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="home-media", lifespan=lifespan)
 app.include_router(tmdb_router)
+app.include_router(sources_router)
 
 
 @app.get("/health")
