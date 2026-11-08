@@ -42,9 +42,20 @@ Full design: PLAN.md. This file tracks multi-session progress.
   Real e2e: known-cached CIA S01E12 hash -> resolve -> real CDN URL -> two
   5 MB Range chunks (206: 5242880 then 10485760 bytes). Delegation to opencode
   was abandoned (two runs produced zero files); implemented directly.
+- (2026-11-08) P4: mpv playback merged to main (commit 2a4d691). MpvClient
+  (mpv JSON-IPC over a Windows named pipe: ctypes CreateFileW, overlapped
+  ReadFile for timeouts, request_id matching with unsolicited-event
+  buffering) + watch.py (local watch_progress upsert/get, source of truth) +
+  /play router (play/pause/resume/seek/position/stop, sync endpoints run in
+  the worker pool). Transport seam: MpvClient(transport=...) so unit tests use
+  an in-memory transport; e2e drives a real mpv binary. 14 new tests (66 total
+  pass). Real e2e: spawn mpv --idle, load a 12s test file, mpv answers during
+  playback, progress persists. Known limitation: seeking during active
+  playback triggers an intermittent Windows ctypes access violation in the
+  overlapped pipe read (needs a native debugger to root-cause); not exercised
+  in e2e.
 
 ## Next
-- P4: mpv playback.
 - P5: Trakt (Device Code Flow) + local tracking fallback.
 - P6: Frontend.
 - P7: Packaging.
@@ -101,3 +112,7 @@ Full design: PLAN.md. This file tracks multi-session progress.
   (httpx+pytest) lives there. Remove with `git worktree remove` when done.
 - P3 worktree C:/ai/repos/home-media-torbox (branch torbox) is merged; the venv
   (fastapi+httpx+pytest+urllib3) lives there. Remove with `git worktree remove`.
+- P4 worktree C:/ai/repos/home-media-mpv (branch mpv) is merged; the venv
+  (fastapi+httpx+pytest) lives there. Remove with `git worktree remove`.
+- mpv binary lives at C:/ai/mpv/mpv.exe (v0.42.0, portable with DLLs in
+  C:/ai/mpv/mpv/). config.py `mpv_path` defaults to it.
