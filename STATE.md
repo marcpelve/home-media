@@ -34,9 +34,20 @@ Full design: PLAN.md. This file tracks multi-session progress.
   results. POST /sources/{tmdb_id} router fetches TMDB details then scrapes
   via asyncio.to_thread. 35 new tests (46 total pass). Real no-Kodi e2e: The
   Matrix 1999 -> 192 ranked sources, Breaking Bad S01E01 -> 84.
+- (2026-11-08) P3: Torbox debrid resolve + downloads merged to main (commit
+  f5cf360). TorboxClient (checkcached/mylist/requestdl/createtorrent,
+  debrid_state SQLite cache, Bearer auth) + DownloadManager (async Range-
+  resumed downloads, progress tracking, resume header) + /sources/resolve and
+  /downloads routers, wired into the lifespan. 15 new tests (61 total pass).
+  Real e2e: known-cached CIA S01E12 hash -> resolve -> real CDN URL -> two
+  5 MB Range chunks (206: 5242880 then 10485760 bytes). Delegation to opencode
+  was abandoned (two runs produced zero files); implemented directly.
 
 ## Next
-- P3: mpv playback + Trakt/local tracking.
+- P4: mpv playback.
+- P5: Trakt (Device Code Flow) + local tracking fallback.
+- P6: Frontend.
+- P7: Packaging.
 - (deferred) Tauri sidecar/process management - let the Tauri app own the
   backend lifecycle instead of starting it separately.
 
@@ -73,7 +84,9 @@ Full design: PLAN.md. This file tracks multi-session progress.
 
 ## Blockers / notes
 - Tauri CLI installed (npm -g @tauri-apps/cli, v2.12.4) and on PATH.
-- Trakt client_secret not yet provided by user (needed for P4).
+- Trakt auth uses Device Code Flow (no client_secret - deprecated by Trakt).
+  Needs a free trakt.tv app (client_id) registered with a verified GitHub
+  account; the user enters a code once per machine. Details in PLAN.md.
 - Python is 3.14 (not the 3.11 the plan assumed). RESOLVED in P2: pyaes
   installs fine; cfscrape (pip AND the bundled copy) breaks on 3.14's modern
   urllib3 (removed DEFAULT_CIPHERS) - fixed with a shim in kodi_stub.py that
@@ -86,3 +99,5 @@ Full design: PLAN.md. This file tracks multi-session progress.
   can be removed with `git worktree remove`.
 - P1 worktree C:/ai/repos/home-media-p1 (branch p1/tmdb) is merged; the venv
   (httpx+pytest) lives there. Remove with `git worktree remove` when done.
+- P3 worktree C:/ai/repos/home-media-torbox (branch torbox) is merged; the venv
+  (fastapi+httpx+pytest+urllib3) lives there. Remove with `git worktree remove`.
