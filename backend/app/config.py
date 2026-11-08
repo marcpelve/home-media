@@ -33,7 +33,6 @@ class Config:
     tmdb_read_access_token: str = ""
     torbox_api_key: str = ""
     trakt_client_id: str = ""
-    trakt_client_secret: str = ""
     download_dir: str = ""
     mpv_path: str = ""
     db_path: str = field(
@@ -50,7 +49,6 @@ def load_config(env_path: Path | None = None) -> Config:
         tmdb_read_access_token=env.get("TMDB_READ_ACCESS_TOKEN", ""),
         torbox_api_key=env.get("TORBOX_API_KEY", ""),
         trakt_client_id=env.get("TRAKT_CLIENT_ID", ""),
-        trakt_client_secret=env.get("TRAKT_CLIENT_SECRET", ""),
         download_dir=env.get("DOWNLOAD_DIR", ""),
         mpv_path=env.get("MPV_PATH", ""),
         db_path=env.get("DB_PATH", str(_PROJECT_ROOT / "data" / "home_media.db")),

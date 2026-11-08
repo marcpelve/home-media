@@ -14,11 +14,13 @@ from app.tmdb import TmdbClient
 from app.torbox import TorboxClient
 from app.downloads import DownloadManager
 from app.mpv import MpvClient
+from app.trakt import TraktClient
 from app.routers.tmdb import router as tmdb_router
 from app.routers.sources import router as sources_router
 from app.routers.torbox import router as torbox_router
 from app.routers.downloads import router as downloads_router
 from app.routers.play import router as play_router
+from app.routers.trakt import router as trakt_router
 
 # Load config at import; the DB path drives startup init. Secrets here are
 # only read, never logged.
@@ -48,7 +50,16 @@ async def lifespan(app: FastAPI):
     app.state.db_path = _config.db_path
     # mpv is spawned lazily on the first /play; stopped on shutdown.
     app.state.mpv = MpvClient(mpv_path=_config.mpv_path)
-    async with app.state.tmdb_client, app.state.torbox_client, app.state.downloads:
+    # Trakt client (device code flow) for watched tracking + sync.
+    app.state.trakt = TraktClient(
+        client_id=_config.trakt_client_id, db_path=_config.db_path
+    )
+    async with (
+        app.state.tmdb_client,
+        app.state.torbox_client,
+        app.state.downloads,
+        app.state.trakt,
+    ):
         yield
     app.state.mpv.stop()
 
@@ -59,6 +70,7 @@ app.include_router(sources_router)
 app.include_router(torbox_router)
 app.include_router(downloads_router)
 app.include_router(play_router)
+app.include_router(trakt_router)
 
 
 @app.get("/health")
