@@ -93,6 +93,13 @@ CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS tmdb_cache (
+    path         TEXT PRIMARY KEY,
+    payload      TEXT NOT NULL,
+    created_at   REAL NOT NULL,
+    ttl_seconds  INT  NOT NULL
+);
 """
 
 
