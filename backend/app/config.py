@@ -35,6 +35,7 @@ class Config:
     trakt_client_id: str = ""
     trakt_client_secret: str = ""
     download_dir: str = ""
+    mpv_path: str = ""
     db_path: str = field(
         default_factory=lambda: str(_PROJECT_ROOT / "data" / "home_media.db")
     )
@@ -51,5 +52,6 @@ def load_config(env_path: Path | None = None) -> Config:
         trakt_client_id=env.get("TRAKT_CLIENT_ID", ""),
         trakt_client_secret=env.get("TRAKT_CLIENT_SECRET", ""),
         download_dir=env.get("DOWNLOAD_DIR", ""),
+        mpv_path=env.get("MPV_PATH", ""),
         db_path=env.get("DB_PATH", str(_PROJECT_ROOT / "data" / "home_media.db")),
     )

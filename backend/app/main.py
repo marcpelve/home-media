@@ -13,10 +13,12 @@ from app.db import init_db
 from app.tmdb import TmdbClient
 from app.torbox import TorboxClient
 from app.downloads import DownloadManager
+from app.mpv import MpvClient
 from app.routers.tmdb import router as tmdb_router
 from app.routers.sources import router as sources_router
 from app.routers.torbox import router as torbox_router
 from app.routers.downloads import router as downloads_router
+from app.routers.play import router as play_router
 
 # Load config at import; the DB path drives startup init. Secrets here are
 # only read, never logged.
@@ -42,8 +44,13 @@ async def lifespan(app: FastAPI):
     app.state.downloads = DownloadManager(
         db_path=_config.db_path, dest_dir=_config.download_dir or None
     )
+    # Local DB path for routers that persist (e.g. watch progress).
+    app.state.db_path = _config.db_path
+    # mpv is spawned lazily on the first /play; stopped on shutdown.
+    app.state.mpv = MpvClient(mpv_path=_config.mpv_path)
     async with app.state.tmdb_client, app.state.torbox_client, app.state.downloads:
         yield
+    app.state.mpv.stop()
 
 
 app = FastAPI(title="home-media", lifespan=lifespan)
@@ -51,6 +58,7 @@ app.include_router(tmdb_router)
 app.include_router(sources_router)
 app.include_router(torbox_router)
 app.include_router(downloads_router)
+app.include_router(play_router)
 
 
 @app.get("/health")
