@@ -165,9 +165,25 @@ Watch tracking model (the key requirement):
 - Best practice: batch by ID, reuse cached rows, never hammer the API.
 
 ### 8.2 Trakt (tracking + sync)
-- Auth: OAuth (register a free app at trakt.tv; needs a verified GitHub
-  account). client_id + client_secret; per-user access_token (stored locally).
-  Same client_id across both installs; each machine uses the user's token.
+- Auth: OAuth 2.0 with NO client_secret. Trakt deprecated client_secret for
+  user sign-in (server-to-server only; future apps may not get one). Register
+  a free app at trakt.tv (needs a verified GitHub account) -> client_id only.
+  - Flow: Device Code Flow (the fit for a desktop media center with no public
+    https callback): POST /oauth/device/code -> show user_code +
+    verification_url; user enters the code in a browser; poll POST
+    /oauth/device/token at the returned interval until 200. No redirect_uri,
+    no client_secret.
+  - (PKCE Authorization Code Flow is Trakt's other no-secret option, but it
+    requires an https:// redirect_uri and explicitly discourates
+    localhost/custom schemes - the wrong shape for a local desktop app.)
+  - Host: auth.trakt.tv (migrated from api.trakt.tv; enforced Feb 1 2027).
+  - Tokens: access_token (7 days) + refresh_token stored locally per machine.
+    Refresh tokens are SINGLE-USE: each refresh returns a new access+refresh
+    pair and invalidates the old refresh token, so always rotate the stored
+    tokens. Pre-migration (mid-July 2026) refresh tokens are dead - the user
+    authorizes once per machine.
+  - Same Trakt account on both machines -> watched history syncs through
+    Trakt (each machine scrobbs to / pulls from the same account).
 - Rate limits (current, from official docs):
   - Authed GET: 500 calls / 5 min.
   - Authed POST/PUT/DELETE: 1 call / second.
@@ -262,9 +278,9 @@ ranked list of {hash, magnet, quality, size, seeders} without Kodi installed.
   POST /api/play {url | file_path}       -> launch mpv
   GET  /api/watch/{id}
   PUT  /api/watch/{id} {position_ms, duration_ms, completed}
-  POST /api/trakt/login
+  POST /api/trakt/login            start device-code flow -> {user_code, verification_url}
+  GET  /api/trakt/status           auth state (pending/connected) + sync status
   POST /api/trakt/sync
-  GET  /api/trakt/status
   GET  /api/config
   PUT  /api/config
 
@@ -287,8 +303,9 @@ keyboard + mouse nav.
 
 - Local config: %APPDATA%/home-media/config.json (gitignored). Dev: a
   .env in backend/ (gitignored).
-- Stored locally: TMDB api key, Torbox api key, Trakt client id/secret +
-  access token, download dir, quality prefs.
+- Stored locally: TMDB api key, Torbox api key, Trakt client id + access/
+  refresh token, download dir, quality prefs. (No client_secret - Trakt
+  deprecated it for user sign-in; the app uses the Device Code Flow.)
 - NEVER committed, NEVER printed in logs. .gitignore covers config/, data/,
   .env, venv, build output.
 - Backend binds to 127.0.0.1 only; no public exposure.
@@ -329,7 +346,8 @@ P3 mpv playback
     read back updates watch_progress.
 
 P4 Trakt tracking + sync
-  - trakt.py (OAuth login, mark-watched, watched/progress/watchlist) +
+  - trakt.py (device-code login, single-use refresh-token rotation,
+    mark-watched, watched/progress/watchlist) +
     sync.py (push/pull, merge, 429 backoff) + watch.py local source of truth.
   - Acceptance: marking watched locally persists offline; with auth, it
     syncs to Trakt and the other machine sees it; survives auth loss.
