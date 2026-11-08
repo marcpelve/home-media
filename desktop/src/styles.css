@@ -1,0 +1,16 @@
+body {
+  font-family: system-ui, sans-serif;
+  background: #1a1a2e;
+  color: #eee;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  margin: 0;
+}
+
+#backend-status {
+  font-size: 1.2rem;
+  opacity: 0.8;
+}

@@ -1,0 +1,17 @@
+{
+  "name": "desktop",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "npx @tauri-apps/cli dev",
+    "build": "node -e \"const fs=require('fs');fs.cpSync('src','dist',{recursive:true});console.log('dist/ built')\"",
+    "tauri": "npx @tauri-apps/cli"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0"
+  }
+}

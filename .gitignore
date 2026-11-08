@@ -24,8 +24,8 @@ dist/
 build/
 *.exe
 backend/dist/
-frontend/src-tauri/target/
-frontend/dist/
+target/
+desktop/dist/
 
 # Node
 node_modules/
