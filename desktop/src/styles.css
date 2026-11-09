@@ -29,6 +29,17 @@ body {
 .logo { font-size: 22px; font-weight: 800; letter-spacing: -0.5px; cursor: pointer; user-select: none; }
 .logo span { color: var(--accent); }
 .logo:hover span { color: #ff5b64; }
+.liblink {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 4px 2px;
+}
+.liblink:hover { color: var(--text); }
 .back {
   background: none;
   border: none;
@@ -126,6 +137,21 @@ main { padding: 8px 28px 48px; }
 .detail h1 { font-size: 30px; margin: 0 0 8px; }
 .detail .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
 .detail .overview { font-size: 15px; line-height: 1.6; max-width: 720px; }
+
+/* library title: episode list */
+.ep-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; max-width: 560px; }
+.ep-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--panel);
+  border: 1px solid #2a2a35;
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+.ep-row .ep-label { font-weight: 600; }
+.ep-row .ep-status { color: var(--muted); font-size: 13px; flex: 1; }
+.ep-row .btn { margin-top: 0; padding: 8px 18px; font-size: 13px; }
 
 .btn {
   margin-top: 20px;

@@ -53,6 +53,8 @@ function renderView(view, params) {
   if (view === "search") return renderSearch(params.query, params.category || "all");
   if (view === "detail") return openDetail(params.id);
   if (view === "settings") return renderSettings();
+  if (view === "library") return renderLibrary();
+  if (view === "librarytitle") return openLibraryTitle(params.id);
   if (view === "nowplaying") {
     renderNowPlaying(cacheGet("detail:" + params.id) || {}, params.source, params.season, params.episode);
     return;
@@ -96,6 +98,7 @@ function updateBackButton() {
 
 document.getElementById("back").addEventListener("click", navBack);
 document.getElementById("home").addEventListener("click", navHome);
+document.getElementById("library").addEventListener("click", () => navPush("library", {}));
 document.getElementById("settings").addEventListener("click", () => navPush("settings", {}));
 
 function makeCard(item, { withProgress = false } = {}) {
@@ -133,25 +136,146 @@ function makeRow(title, items, opts) {
 async function renderHome() {
   stopPlayPoll();
   app.innerHTML = "";
-  const [watch, home] = await Promise.allSettled([
+  const [watch, home, library] = await Promise.allSettled([
     api("/watch"),
     api("/tmdb/home"),
+    api("/library"),
   ]);
   if (watch.status === "fulfilled") {
     const row = makeRow("Continue Watching", watch.value.items, { withProgress: true });
     if (row) app.appendChild(row);
   }
+  if (library.status === "fulfilled") {
+    const items = library.value.titles || [];
+    if (items.length) {
+      const row = el("section", "row");
+      row.appendChild(el("h2", null, "My Library"));
+      const cards = el("div", "cards");
+      for (const t of items.slice(0, 12)) cards.appendChild(makeLibraryCard(t));
+      row.appendChild(cards);
+      app.appendChild(row);
+    }
+  }
   if (home.status === "fulfilled") {
     const row = makeRow("Trending This Week", home.value.results || []);
     if (row) app.appendChild(row);
   }
-  if (watch.status === "rejected" && home.status === "rejected") {
+  if (watch.status === "rejected" && home.status === "rejected" && library.status === "rejected") {
     const box = el("div", "boot");
     box.appendChild(el("p", "muted", "Backend unreachable."));
     const btn = el("button", "btn", "Retry");
     btn.addEventListener("click", () => renderHome());
     box.appendChild(btn);
     app.appendChild(box);
+  }
+}
+
+// ---- offline library (works with no internet) ----
+async function renderLibrary() {
+  stopPlayPoll();
+  app.innerHTML = "";
+  let data;
+  try {
+    data = await api("/library");
+  } catch (e) {
+    app.appendChild(el("p", "muted", "Could not load library: " + e.message));
+    return;
+  }
+  const titles = data.titles || [];
+  if (!titles.length) {
+    const box = el("div", "boot");
+    box.appendChild(el("p", "muted", "No local files yet. Download content to build your library."));
+    const btn = el("button", "btn", "Browse");
+    btn.addEventListener("click", () => navPush("search", { query: "" }));
+    box.appendChild(btn);
+    app.appendChild(box);
+    return;
+  }
+  const grid = el("div", "grid");
+  for (const t of titles) grid.appendChild(makeLibraryCard(t));
+  const row = el("section", "row");
+  row.appendChild(el("h2", null, `My Library (${titles.length})`));
+  row.appendChild(grid);
+  app.appendChild(row);
+  window.scrollTo(0, 0);
+}
+
+function makeLibraryCard(t) {
+  const card = el("div", "card");
+  const img = el("img", "poster");
+  img.loading = "lazy";
+  img.src = posterSrc(t);
+  img.alt = t.title || "";
+  card.appendChild(img);
+  const meta = el("div", "meta");
+  meta.appendChild(el("div", "title", t.title || ""));
+  const sub = [t.type, t.file_count ? t.file_count + (t.type === "tv" ? " eps" : " file") : ""].filter(Boolean).join(" \u00b7 ");
+  if (sub) meta.appendChild(el("div", "muted", sub));
+  card.appendChild(meta);
+  card.addEventListener("click", () => navPush("librarytitle", { id: t.tmdb_id }));
+  return card;
+}
+
+async function openLibraryTitle(id) {
+  stopPlayPoll();
+  app.innerHTML = "";
+  let data;
+  try {
+    data = await api("/library");
+  } catch (e) {
+    app.appendChild(el("p", "muted", "Could not load library: " + e.message));
+    return;
+  }
+  const t = (data.titles || []).find((x) => x.tmdb_id === id);
+  if (!t) {
+    app.appendChild(el("p", "muted", "Title not found."));
+    return;
+  }
+  const wrap = el("div", "detail");
+  const img = el("img", "poster");
+  img.src = posterSrc(t);
+  img.alt = t.title || "";
+  wrap.appendChild(img);
+
+  const info = el("div", "info");
+  info.appendChild(el("h1", null, t.title || ""));
+  info.appendChild(el("div", "meta", [t.type, t.year].filter(Boolean).join(" \u00b7 ")));
+  if (t.overview) info.appendChild(el("div", "overview", t.overview));
+
+  const eps = t.episodes || [];
+  if (!eps.length) {
+    info.appendChild(el("div", "muted", "No local files for this title."));
+  } else {
+    const list = el("div", "ep-list");
+    for (const ep of eps) {
+      const rowEl = el("div", "ep-row");
+      rowEl.appendChild(el("span", "ep-label", t.type === "tv" ? `Episode ${ep.episode}` : "Movie"));
+      rowEl.appendChild(el("span", "ep-status", ep.completed ? "Completed" : (ep.position_ms ? "In progress" : "Not started")));
+      const playBtn = el("button", "btn", "Play");
+      playBtn.addEventListener("click", () => playLocal(t, ep));
+      rowEl.appendChild(playBtn);
+      list.appendChild(rowEl);
+    }
+    info.appendChild(list);
+  }
+  wrap.appendChild(info);
+  app.appendChild(wrap);
+  window.scrollTo(0, 0);
+}
+
+async function playLocal(t, ep) {
+  try {
+    const season = t.type === "tv" && ep.episode != null ? 1 : null;
+    const episode = ep.episode != null ? ep.episode : null;
+    await api("/play", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ file_path: ep.file_path }),
+    });
+    cacheSet("detail:" + t.tmdb_id, { ...t, id: t.tmdb_id });
+    navPush("nowplaying", { id: t.tmdb_id, source: { quality: "Local" }, season, episode });
+  } catch (e) {
+    alert("Playback failed: " + e.message);
   }
 }
 

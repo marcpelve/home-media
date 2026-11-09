@@ -41,9 +41,16 @@ async def categories(request: Request):
 async def title(request: Request, tmdb_id: int):
     client = get_tmdb_client(request)
     try:
-        return await client.title(tmdb_id)
+        data = await client.title(tmdb_id)
     except Exception:
         raise HTTPException(status_code=404, detail="Title not found")
+    # Persist durable metadata so the offline library can resolve this title.
+    db_path = getattr(request.app.state, "db_path", None)
+    if db_path:
+        from app.library import upsert_title
+
+        upsert_title(db_path, tmdb_id, data)
+    return data
 
 
 @router.get("/reviews/{tmdb_id}")
@@ -59,14 +66,20 @@ async def reviews(request: Request, tmdb_id: int):
 async def poster(request: Request, tmdb_id: int, size: str = Query("w342")):
     """Serve the cached poster file; downloads + caches on miss."""
     client = get_tmdb_client(request)
-    # We need the poster_path from the title details to know what to fetch.
-    # Fetch details (cached) to get the poster path.
-    try:
-        details = await client.title(tmdb_id)
-    except Exception:
-        raise HTTPException(status_code=404, detail="Title not found")
+    # Prefer the durable local poster_path (offline-safe); fall back to
+    # fetching details, which needs the 7-day title cache or a live call.
+    db_path = getattr(request.app.state, "db_path", None)
+    poster_path = None
+    if db_path:
+        from app.library import local_poster_path
 
-    poster_path = details.get("poster_path")
+        poster_path = local_poster_path(db_path, tmdb_id)
+    if poster_path is None:
+        try:
+            details = await client.title(tmdb_id)
+        except Exception:
+            raise HTTPException(status_code=404, detail="Title not found")
+        poster_path = details.get("poster_path")
     if not poster_path:
         raise HTTPException(status_code=404, detail="No poster available")
 

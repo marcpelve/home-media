@@ -3,7 +3,7 @@
 Lightweight native Windows media app to replace Kodi.
 Design: PLAN.md  ·  Detailed log: STATE.md  ·  This file: live phase progress.
 
-**8 / 9 phases done - P7 (packaging) in progress**
+**8 / 9 phases done - P7 (packaging) in progress; offline library built**
 
 ## Phases
 
@@ -19,13 +19,22 @@ Design: PLAN.md  ·  Detailed log: STATE.md  ·  This file: live phase progress.
 
 ## P7 - current focus
 
-- [x] PyInstaller backend `home-media.exe` (onefile, windowed) - builds + runs
+- [x] PyInstaller backend `home-media.exe` (one-DIR, windowed) - fast startup (~0s)
 - [x] Packaging-aware config (exe-relative `.env`, `data/`, `mpv.exe` when frozen)
 - [x] Portable layout verified: `home-media.exe` + `.env` + `data/` (Trakt + cache load)
-- [x] Tauri sidecar wired (`binaries/home-media`, `externalBin`, spawn on launch / kill on close)
+- [x] Tauri sidecar wired (`resources/home-media` folder, spawn on launch / kill on close)
 - [x] Frontend `dist/` built for bundling
-- [-] Tauri app + Windows installer build  <- IN PROGRESS
-- [ ] Installer verified (launches app, backend sidecar runs)
+- [x] Frontend startup grace (polls /health, "Starting" state, Retry button)
+- [x] Tauri app + Windows installer built (MSI + NSIS)
+- [ ] Installer verified on a clean machine (needs the user to run it)
+
+## Offline library - browse + play downloaded content with no internet
+
+- [x] Phase A: persist title metadata to `titles` on first sight (`/tmdb/title` upsert)
+- [x] Phase B: DB-direct `/library` + `/library/file` endpoints (no TMDB calls)
+- [x] Phase C: frontend Library screen (grid -> title detail -> episodes + Play)
+- [x] Phase D: home "My Library" row (`Promise.allSettled`, offline-safe)
+- [x] Phase E: empty/error states, honest episode labels
 
 ## Legend
 

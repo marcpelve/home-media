@@ -108,13 +108,34 @@ Full design: PLAN.md. This file tracks multi-session progress.
   source errors are collected so one 403/405 no longer aborts the whole sync.
   85 backend tests pass; browser-verified the panel shows the connected user
   and a clean sync result.
+- (2026-11-09) P7 packaging: one-dir sidecar + startup grace + installers.
+  Migrated the PyInstaller backend from one-file to one-dir (fast startup,
+  ~0s cold boot vs ~35s of extraction). The Tauri app now bundles the whole
+  `resources/home-media/` folder (bundle.resources) and spawns the sidecar
+  from resource_dir(); a dual-path spawn handles Tauri's folder layout. Built
+  the MSI + NSIS installers. Added a frontend startup grace: the webview
+  polls /health every 750ms with a "Starting" state and a Retry button, so a
+  slower sidecar boot no longer shows a dead-end error. Committed across
+  d3b579c (installer), 02f89d1 (one-dir), 83ed81f (startup grace).
+- (2026-11-09) Offline library: browse + play downloaded content with no
+  internet. Phase A: /tmdb/title now upserts durable metadata into the
+  `titles` table on first sight. Phase B: new DB-direct /library and
+  /library/file endpoints build the browsable library straight from
+  downloads + watch_progress + titles (no TMDB calls), plus a library.py
+  service. Phase C: a frontend Library screen (grid of cards -> title detail
+  -> episode list with Play wired to POST /play). Phase D: a home "My
+  Library" row via Promise.allSettled so one failed source never blocks the
+  others. Phase E: empty/error states and honest episode labels. 3 new pytest
+  tests (88 total pass); browser-verified the home row, library grid,
+  title/episode view, and local playback (mpv launches with the file).
 
 ## Next
-- [-] P6: Frontend (home, search, detail, picker, playback UI, Trakt panel
-  done; E2E playback still blocked on a real Torbox API key)
-- P7: Packaging.
-- (deferred) Tauri sidecar/process management - let the Tauri app own the
-  backend lifecycle instead of starting it separately.
+- [-] P6: Frontend (home, search, detail, picker, playback UI, Trakt panel,
+  offline library done; E2E playback still blocked on a real Torbox API key)
+- [-] P7: Packaging (one-dir sidecar + startup grace + installers done;
+  installer still needs a clean-machine verification run)
+- (done) Tauri sidecar/process management - the Tauri app now owns the
+  backend lifecycle (spawn on launch / kill on close).
 
 ## Decisions
 - TMDB auth: v4 Read Access Token via `Authorization: *** header (not the v3
