@@ -24,6 +24,7 @@ dist/
 build/
 *.exe
 backend/dist/
+backend/build-console/
 target/
 desktop/dist/
 

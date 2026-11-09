@@ -3,7 +3,7 @@
 Lightweight native Windows media app to replace Kodi.
 Design: PLAN.md  ·  Detailed log: STATE.md  ·  This file: live phase progress.
 
-**7 / 9 phases done - P6 (frontend) in progress**
+**8 / 9 phases done - P7 (packaging) in progress**
 
 ## Phases
 
@@ -14,19 +14,18 @@ Design: PLAN.md  ·  Detailed log: STATE.md  ·  This file: live phase progress.
 - [x] P3   Torbox debrid resolve + downloads
 - [x] P4   mpv playback (JSON-IPC + watch progress)
 - [x] P5   Trakt sync (device flow + PKCE, local fallback)
-- [-] P6   Frontend  <- IN PROGRESS
-- [ ] P7   Packaging
-- [ ] (deferred) Tauri sidecar / process management
+- [x] P6   Frontend (browse, search, detail, picker, playback, Trakt panel, keyboard nav)
+- [-] P7   Packaging  <- IN PROGRESS
 
-## P6 - current focus
+## P7 - current focus
 
-- [-] Library browsing (Continue Watching + Trending done; My List, hero pending)
-- [x] Search + title detail view (vertical grid + category tabs)
-- [x] Back navigation (history stack) + clickable home (logo)
-- [-] Source picking + one-click play (picker UI + keyboard nav done; E2E blocked on Torbox key)
-- [-] Playback + progress display (now-playing view done; E2E blocked on Torbox key)
-- [x] Arrow-key / 10-foot keyboard navigation (home, search, detail, picker)
-- [x] Trakt sign-in / sync panel (auth status, device-code flow, sync)
+- [x] PyInstaller backend `home-media.exe` (onefile, windowed) - builds + runs
+- [x] Packaging-aware config (exe-relative `.env`, `data/`, `mpv.exe` when frozen)
+- [x] Portable layout verified: `home-media.exe` + `.env` + `data/` (Trakt + cache load)
+- [x] Tauri sidecar wired (`binaries/home-media`, `externalBin`, spawn on launch / kill on close)
+- [x] Frontend `dist/` built for bundling
+- [-] Tauri app + Windows installer build  <- IN PROGRESS
+- [ ] Installer verified (launches app, backend sidecar runs)
 
 ## Legend
 

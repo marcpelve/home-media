@@ -11,7 +11,12 @@ import sys
 from pathlib import Path
 
 # Make cocoscrapers importable as a top-level package before importing it.
-_COCO_DIR = str(Path(__file__).resolve().parent / "coco")
+# When packaged (PyInstaller) the vendored package is bundled as a top-level
+# module in the extraction dir, so point there.
+if getattr(sys, "frozen", False):
+    _COCO_DIR = sys._MEIPASS  # type: ignore[attr-defined]
+else:
+    _COCO_DIR = str(Path(__file__).resolve().parent / "coco")
 if _COCO_DIR not in sys.path:
     sys.path.insert(0, _COCO_DIR)
 
