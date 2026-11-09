@@ -5,6 +5,7 @@ Run with:
 """
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,7 +36,8 @@ async def lifespan(app: FastAPI):
     # Create the local DB (source of truth) on startup if it is absent.
     init_db(_config.db_path)
     # Create the TMDB client and store it on app state for routers.
-    poster_dir = _config.download_dir or None
+    # Posters cache next to the DB unless a download dir is configured.
+    poster_dir = _config.download_dir or str(Path(_config.db_path).parent / "posters")
     app.state.tmdb_client = TmdbClient(
         token=_config.tmdb_read_access_token,
         db_path=_config.db_path,

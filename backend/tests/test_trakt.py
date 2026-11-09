@@ -29,6 +29,16 @@ USER = "raymond"
 FRESH = time.time() + 100000  # far-future expiry: no refresh needed
 
 
+class _MockTmdb:
+    """Minimal stand-in for TmdbClient: title_typed returns a poster_path."""
+
+    def __init__(self, posters: dict | None = None):
+        self._posters = posters or {}
+
+    async def title_typed(self, tmdb_id: int, media_type: str) -> dict:
+        return {"poster_path": self._posters.get(tmdb_id)}
+
+
 def _db(tmp_path: Path) -> str:
     db_path = tmp_path / "trakt.db"
     init_db(db_path)
@@ -616,12 +626,13 @@ def test_recommendations_endpoint_shape(tmp_path: Path):
     app.include_router(trakt_router)
     app.state.trakt = client
     app.state.db_path = db_path
+    app.state.tmdb_client = _MockTmdb({155: "/p155.jpg", 645: "/p645.jpg"})
     with TestClient(app) as c:
         r = c.get("/trakt/recommendations")
         assert r.status_code == 200
         data = r.json()
-        assert data["movie"] == [{"id": 155, "title": "Rec Movie", "type": "movie"}]
-        assert data["show"] == [{"id": 645, "title": "Rec Show", "type": "tv"}]
+        assert data["movie"] == [{"id": 155, "title": "Rec Movie", "type": "movie", "poster_path": "/p155.jpg"}]
+        assert data["show"] == [{"id": 645, "title": "Rec Show", "type": "tv", "poster_path": "/p645.jpg"}]
     asyncio.run(http_client.aclose())
 
 
@@ -637,6 +648,7 @@ def test_recommendations_unauthenticated_empty(tmp_path: Path):
     app.include_router(trakt_router)
     app.state.trakt = client
     app.state.db_path = db_path
+    app.state.tmdb_client = _MockTmdb()
     with TestClient(app) as c:
         r = c.get("/trakt/recommendations")
         assert r.status_code == 200

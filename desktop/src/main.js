@@ -27,8 +27,8 @@ function esc(s) {
 }
 
 function posterSrc(item) {
-  if (item.poster) return API + item.poster; // local /tmdb/poster proxy
-  if (item.poster_path) return `https://image.tmdb.org/t/p/w342${item.poster_path}`;
+  if (item.poster) return API + item.poster; // local poster (continue watching)
+  if (item.poster_path) return API + "/tmdb/poster/" + item.id; // proxy, disk-cached (offline)
   return "";
 }
 
@@ -142,7 +142,7 @@ function normRec(it, type) {
     id: it.id,
     title: it.title || "",
     type,
-    poster: it.id ? `/tmdb/poster/${it.id}?size=w342` : null,
+    poster_path: it.poster_path,
   };
 }
 
@@ -185,7 +185,7 @@ function buildHomeRows(watch, popular, trending, latest, recs) {
     rows.push(["Because You Watched", [
       ...(recs.value.movie || []).map((it) => normRec(it, "movie")),
       ...(recs.value.show || []).map((it) => normRec(it, "tv")),
-    ]]);
+    ].filter((it) => it.poster_path)]);
   }
   return rows;
 }

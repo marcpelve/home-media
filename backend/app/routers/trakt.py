@@ -91,13 +91,17 @@ async def sync(request: Request) -> dict:
 
 @router.get("/recommendations")
 async def recommendations(request: Request) -> dict:
-    """Personalized picks from Trakt, normalized to {id, title, type}.
+    """Personalized picks from Trakt, normalized to {id, title, type, poster_path}.
 
     The TMDB id (ids.tmdb) is what the rest of the app keys on; items without
-    one are dropped. The frontend resolves posters via the /tmdb/poster proxy.
+    one are dropped. poster_path is resolved via the cached TMDB title lookup so
+    the frontend can serve posters through the /tmdb/poster proxy.
     """
-    client = _client(request)
-    data = await client.get_recommendations()
+    import asyncio as _aio
+
+    trakt = _client(request)
+    tmdb = request.app.state.tmdb_client
+    data = await trakt.get_recommendations()
 
     def _norm(items: list, key: str, type_: str) -> list:
         out = []
@@ -108,7 +112,15 @@ async def recommendations(request: Request) -> dict:
                 out.append({"id": tmdb_id, "title": inner.get("title"), "type": type_})
         return out
 
-    return {
-        "movie": _norm(data.get("movie", []), "movie", "movie"),
-        "show": _norm(data.get("show", []), "show", "tv"),
-    }
+    movies = _norm(data.get("movie", []), "movie", "movie")
+    shows = _norm(data.get("show", []), "show", "tv")
+
+    async def _poster(it: dict) -> None:
+        try:
+            details = await tmdb.title_typed(it["id"], it["type"])
+            it["poster_path"] = details.get("poster_path")
+        except Exception:
+            it["poster_path"] = None
+
+    await _aio.gather(*[_poster(it) for it in movies + shows])
+    return {"movie": movies, "show": shows}

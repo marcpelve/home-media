@@ -192,6 +192,14 @@ class TmdbClient:
                 return data
             raise
 
+    async def title_typed(self, tmdb_id: int, media_type: str) -> dict:
+        """Title details for a known type - no movie-then-tv fallback."""
+        prefix = "tv" if media_type == "tv" else "movie"
+        params = {"append_to": "external_ids"} if prefix == "tv" else None
+        data = await self._fetch(f"{prefix}/{tmdb_id}", TTL_DETAILS, params)
+        data["_type"] = prefix
+        return data
+
     async def reviews(self, tmdb_id: int) -> dict:
         """Reviews; tries movie first, falls back to tv."""
         import asyncio as _aio
@@ -239,7 +247,9 @@ class TmdbClient:
         # Download
         url = f"https://image.tmdb.org/t/p/{size}{poster_path}"
         client = self._client
-        resp = await client.get(url, base_url=None)
+        if client is None:
+            return None
+        resp = await client.get(url)
         resp.raise_for_status()
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(resp.content)
