@@ -496,8 +496,13 @@ function stepSelect(el, delta) {
 document.addEventListener("keydown", (e) => {
   const search = document.getElementById("search");
   const inSearch = document.activeElement === search;
-  if (inSearch && /^[a-z0-9 ]$/i.test(e.key)) return; // typing: pass through
-  if (inSearch) search.blur();
+  if (inSearch) {
+    // Pass text editing through (typing, backspace, delete, punctuation);
+    // only hand off to grid navigation for arrows / enter / escape.
+    const nav = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Enter", "Escape"].includes(e.key);
+    if (!nav) return;
+    search.blur();
+  }
   if (e.key === "/") { e.preventDefault(); search.focus(); return; }
 
   const cur = currentFocus();
