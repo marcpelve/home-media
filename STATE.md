@@ -71,7 +71,19 @@ Full design: PLAN.md. This file tracks multi-session progress.
   renders 20 trending cards, search "matrix" returns 30 results, detail shows
   The Matrix with overview + Play, Continue Watching shows a progress bar at
   the correct percentage. Also fixed /sources to read imdb_id from the
-  top-level TMDB title object (it was looking in external_ids).
+  the top-level TMDB title object (it was looking in external_ids).
+- (2026-11-09) P6 continued: source picker, now-playing view, and 10-foot
+  keyboard navigation (commit 4ef77b7). Built the source picker overlay
+  (quality/size/seeders/provider rows with 4K/HD badges) and a now-playing
+  view (position polling via /play/position; pause/resume/seek/stop). Added a
+  focus-based keyboard layer for home-theatre use (small bluetooth keyboard):
+  one focused item at a time, Left/Right within a row, Up/Down between rows,
+  Enter/Space activates, Esc goes back, "/" focuses search; a .focused ring
+  marks the current item and a hint bar shows the controls. Fixed a picker bug
+  where the panel was built but never attached to the overlay (rows never
+  rendered). Browser-verified: home/search/detail/picker all navigate by
+  keyboard; source rows render and step with Up/Down. E2E playback is blocked
+  on a real Torbox API key (resolve is API-gated; the scrape itself works).
 
 ## Next
 - [-] P6: Frontend (home screen done; source picking, playback UI, Trakt panel pending)
