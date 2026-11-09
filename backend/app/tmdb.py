@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import urllib.parse
 from pathlib import Path
 
 import httpx
@@ -100,20 +101,23 @@ class TmdbClient:
 
     async def _fetch(self, path: str, ttl: int, params: dict | None = None) -> dict:
         """Fetch a TMDB path with cache + de-duplication."""
+        # Cache key must include params: same path with different query
+        # strings (e.g. search) must not collide, else the first result wins.
+        cache_key = path if not params else f"{path}?{urllib.parse.urlencode(sorted(params.items()))}"
         # Check cache first
-        cached = self._cache_get(path, ttl)
+        cached = self._cache_get(cache_key, ttl)
         if cached is not None:
             return cached
 
-        # De-duplicate in-flight requests per path
-        if path not in self._locks:
-            self._locks[path] = asyncio.Lock()
-        lock = self._locks[path]
+        # De-duplicate in-flight requests per cache key
+        if cache_key not in self._locks:
+            self._locks[cache_key] = asyncio.Lock()
+        lock = self._locks[cache_key]
 
         async with lock:
             # Re-check cache after acquiring lock (another coroutine may have
             # populated it while we waited).
-            cached = self._cache_get(path, ttl)
+            cached = self._cache_get(cache_key, ttl)
             if cached is not None:
                 return cached
 
@@ -121,7 +125,7 @@ class TmdbClient:
             resp = await client.get(path, params=params)
             resp.raise_for_status()
             data = resp.json()
-            self._cache_set(path, data, ttl)
+            self._cache_set(cache_key, data, ttl)
             return data
 
     # -- public API methods --------------------------------------------------
