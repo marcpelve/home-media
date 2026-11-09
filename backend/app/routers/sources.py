@@ -79,4 +79,14 @@ async def get_sources(tmdb_id: int, query: SourceQuery, request: Request):
         )
 
     results = await asyncio.to_thread(scrape, data)
+    # Annotate each source with whether it is already cached on the Torbox
+    # debrid (cached = instant download). Checks run concurrently, so the
+    # wall time is ~one API call; repeated hashes short-circuit through the
+    # debrid_state cache.
+    torbox = request.app.state.torbox_client
+    cached_flags = await asyncio.gather(
+        *(torbox.check_cached(s["hash"]) for s in results)
+    )
+    for s, c in zip(results, cached_flags):
+        s["cached"] = bool(c)
     return {"sources": results, "count": len(results)}

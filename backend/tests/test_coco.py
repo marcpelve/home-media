@@ -222,6 +222,24 @@ class TestCocoDriverBuildData:
         assert data["season"] == "2"
         assert data["episode"] == "5"
 
+    def test_parse_capabilities(self):
+        from app.coco_driver import _parse_capabilities
+        # A 4K Dolby Vision BluRay HEVC 10-bit Atmos release.
+        tags = _parse_capabilities(".2160p.bluray.x265.10bit.dv.hdr.ddp.5.1.atmos.", "")
+        assert "BluRay" in tags
+        assert "HEVC" in tags
+        assert "10-bit" in tags
+        assert "Dolby Vision" in tags
+        assert "HDR" in tags
+        assert "Atmos" in tags
+        # A 1080p H.264 web release.
+        tags2 = _parse_capabilities(".1080p.web.x264.sdr.dd5.1.", "")
+        assert "Web" in tags2
+        assert "H.264" in tags2
+        # Nothing recognisable -> no tags.
+        assert _parse_capabilities("", "") == []
+        assert _parse_capabilities(".some.obscure.release.", "") == []
+
 
 class TestCocoDriverScrape:
     """Test scrape() with a mocked cocoscrapers.sources()."""
@@ -435,6 +453,16 @@ def sources_app(tmp_path):
     mock_client.title = _title
     app.state.tmdb_client = mock_client
 
+    # Mock Torbox client: check_cached must be a real awaitable so the
+    # router's asyncio.gather works. All hashes report as not cached.
+    mock_torbox = MagicMock()
+
+    async def _check_cached(h):
+        return False
+
+    mock_torbox.check_cached = _check_cached
+    app.state.torbox_client = mock_torbox
+
     return app
 
 
@@ -449,6 +477,7 @@ class TestSourcesRouter:
         assert data["count"] == 1
         assert data["sources"][0]["hash"] == "abc"
         assert data["sources"][0]["quality"] == "1080p"
+        assert data["sources"][0]["cached"] is False
 
     def test_tv_sources(self, sources_app):
         with patch("app.routers.sources.scrape",

@@ -72,6 +72,59 @@ def _quality_rank(quality: str) -> int:
     return _QUALITY_RANK.get(quality, 0)
 
 
+def _parse_capabilities(name_info: str, name: str) -> list[str]:
+    """Extract Kodi/umbrella-style capability tags from a release name.
+
+    `name_info` is Cocoscrapers' cleaned, dot-separated, lowercase form
+    (e.g. ".2160p.bluray.x265.10bit.sdr.dts.hd.ma.5.1"); fall back to the raw
+    `name` when it is absent. Tags are returned in a fixed display order:
+    source, codec, HDR, bit depth, audio.
+    """
+    raw = (name_info or name or "").lower()
+    tokens = set(re.split(r"[^a-z0-9]+", raw))
+    tags: list[str] = []
+    # source / container
+    if tokens & {"bluray", "brrip", "bdrip"}:
+        tags.append("BluRay")
+    elif "remux" in tokens:
+        tags.append("Remux")
+    elif tokens & {"web", "webdl", "webm"}:
+        tags.append("Web")
+    elif "hdtv" in tokens:
+        tags.append("HDTV")
+    # codec
+    if tokens & {"x265", "hevc"}:
+        tags.append("HEVC")
+    elif tokens & {"x264", "h264"}:
+        tags.append("H.264")
+    elif "av1" in tokens:
+        tags.append("AV1")
+    # HDR
+    if tokens & {"dovi", "dv", "dvhdr", "dolbyvision"}:
+        tags.append("Dolby Vision")
+    if tokens & {"hdr10", "hdr10plus"}:
+        tags.append("HDR10")
+    elif "hdr" in tokens:
+        tags.append("HDR")
+    if "hlg" in tokens:
+        tags.append("HLG")
+    # bit depth
+    if "10bit" in tokens:
+        tags.append("10-bit")
+    # audio
+    if "atmos" in tokens:
+        tags.append("Atmos")
+    if "truehd" in tokens:
+        tags.append("TrueHD")
+    if "ddp" in tokens:
+        tags.append("DD+")
+    elif "dd" in tokens:
+        tags.append("DD")
+    if "dts" in tokens:
+        tags.append("DTS")
+    return tags
+
+
 def _size_gb(size_str: str) -> float:
     m = _SIZE_RE.search(str(size_str or ""))
     return float(m.group(1)) if m else 0.0
@@ -110,7 +163,9 @@ def scrape(data: dict) -> list[dict]:
 
     Sources are scraped concurrently (thread pool) and filtered to
     MIN_QUALITY_RANK (1080p+) and MIN_SEEDERS. Returns [{hash, magnet, quality,
-    size, seeders, provider}] sorted by (quality desc, seeders desc, size desc).
+    size, seeders, provider, name, tags}] sorted by (quality desc, seeders
+    desc, size desc). `tags` are capability labels parsed from the release
+    name (Dolby Vision, HDR10, HEVC, BluRay, ...).
     """
     source_list = cocoscrapers.sources(ret_all=False)
 
@@ -125,11 +180,13 @@ def scrape(data: dict) -> list[dict]:
                 if prev is None or seeders > prev.get("seeders", 0):
                     best_by_hash[h] = {
                         "hash": h,
-                        "magnet": r.get("magnet", ""),
+                        "magnet": r.get("magnet") or r.get("url", ""),
                         "quality": r.get("quality", "SD"),
                         "size": r.get("size", ""),
                         "seeders": seeders,
                         "provider": name,
+                        "name": r.get("name", ""),
+                        "tags": _parse_capabilities(r.get("name_info", ""), r.get("name", "")),
                     }
 
     ranked = [

@@ -452,14 +452,14 @@ function renderDetail(d) {
 }
 
 // ---- source picker ----
-function openSourcePicker(d, sources, btn, seasonSel, episodeSel) {
+// Open the source modal immediately (with a loading state) so the user sees
+// it working; the list is populated by fillSourceList once sources return.
+function openSourcePickerLoading(d, btn, seasonSel, episodeSel) {
   const overlay = el("div", "overlay");
   const panel = el("div", "picker");
   panel.appendChild(el("h2", null, `Play ${d.title || d.name}`));
   const sub = el("div", "muted");
-  sub.textContent = seasonSel && episodeSel
-    ? `Season ${seasonSel.value}, Episode ${episodeSel.value}  -  ${sources.length} sources`
-    : `${sources.length} sources`;
+  sub.textContent = "Finding sources via Torbox...";
   panel.appendChild(sub);
 
   // Make it explicit that downloads resolve through the Torbox debrid, not a
@@ -469,20 +469,8 @@ function openSourcePicker(d, sources, btn, seasonSel, episodeSel) {
   via.appendChild(el("span", "via-note", "- downloads resolve via debrid, no direct torrent"));
   panel.appendChild(via);
 
-  const list = el("div", "src-list");
-  for (const s of sources) {
-    const row = el("div", "src-row");
-    row.appendChild(el("span", "badge " + (s.quality === "4K" ? "q4k" : "qhd"), s.quality || "?"));
-    const meta = el("span", "src-meta");
-    meta.textContent = [
-      s.size != null ? `${s.size} GB` : "",
-      s.seeders != null ? `${s.seeders} seeders` : "",
-      s.provider || "",
-    ].filter(Boolean).join("  \u00b7  ");
-    row.appendChild(meta);
-    row.addEventListener("click", () => pickSource(d, s, seasonSel, episodeSel));
-    list.appendChild(row);
-  }
+  const list = el("div", "src-list picker-loading");
+  list.appendChild(el("div", "spinner"));
   panel.appendChild(list);
 
   const close = el("button", "btn btn-ghost", "Cancel");
@@ -494,9 +482,42 @@ function openSourcePicker(d, sources, btn, seasonSel, episodeSel) {
     overlay.remove();
     if (btn) { btn.disabled = false; btn.textContent = "Play"; }
   }
-  if (btn) btn.disabled = true;
   overlay.appendChild(panel);
   app.appendChild(overlay);
+  return { overlay, panel, sub, list, dismiss };
+}
+
+function fillSourceList(handles, d, sources, seasonSel, episodeSel) {
+  const { sub, list } = handles;
+  sub.textContent = seasonSel && episodeSel
+    ? `Season ${seasonSel.value}, Episode ${episodeSel.value}  -  ${sources.length} sources`
+    : `${sources.length} sources`;
+  list.classList.remove("picker-loading");
+  list.innerHTML = "";
+  for (const s of sources) {
+    const row = el("div", "src-row");
+    const top = el("div", "src-row-top");
+    top.appendChild(el("span", "badge " + (s.quality === "4K" ? "q4k" : "qhd"), s.quality || "?"));
+    for (const t of (s.tags || [])) top.appendChild(el("span", "badge cap", t));
+    if (s.cached) top.appendChild(el("span", "badge cached", "Cached"));
+    row.appendChild(top);
+    const meta = el("span", "src-meta");
+    meta.textContent = [
+      s.size != null ? `${s.size} GB` : "",
+      s.seeders != null ? `${s.seeders} seeders` : "",
+      s.provider || "",
+    ].filter(Boolean).join("  \u00b7  ");
+    row.appendChild(meta);
+    row.addEventListener("click", () => pickSource(d, s, seasonSel, episodeSel));
+    list.appendChild(row);
+  }
+}
+
+function showPickerMessage(handles, msg) {
+  const { list } = handles;
+  list.classList.remove("picker-loading");
+  list.innerHTML = "";
+  list.appendChild(el("div", "muted picker-empty", msg));
 }
 
 async function pickSource(d, source, seasonSel, episodeSel) {
@@ -522,7 +543,9 @@ async function pickSource(d, source, seasonSel, episodeSel) {
 
 async function startPlayback(d, btn, seasonSel, episodeSel) {
   btn.disabled = true;
-  btn.textContent = "Finding sources via Torbox...";
+  // Open the modal up front so the user sees it working; the list fills in
+  // once sources come back.
+  const handles = openSourcePickerLoading(d, btn, seasonSel, episodeSel);
   try {
     const body = d._type === "tv"
       ? { season: seasonSel ? Number(seasonSel.value) : 1, episode: episodeSel ? Number(episodeSel.value) : 1 }
@@ -533,16 +556,12 @@ async function startPlayback(d, btn, seasonSel, episodeSel) {
       body: JSON.stringify(body),
     });
     if (!srcs.sources || !srcs.sources.length) {
-      alert("No sources found for this title.");
-      btn.textContent = "Play";
-      btn.disabled = false;
-      return;
+      showPickerMessage(handles, "No sources found for this title.");
+    } else {
+      fillSourceList(handles, d, srcs.sources, seasonSel, episodeSel);
     }
-    openSourcePicker(d, srcs.sources, btn, seasonSel, episodeSel);
   } catch (e) {
-    alert("Source lookup failed: " + e.message);
-    btn.textContent = "Play";
-    btn.disabled = false;
+    showPickerMessage(handles, "Source lookup failed: " + e.message);
   }
 }
 
