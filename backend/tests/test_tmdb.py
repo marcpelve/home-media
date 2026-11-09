@@ -79,6 +79,15 @@ def tmdb_app(tmp_path: Path):
         "/discover/tv": httpx.Response(
             200, json={"results": [{"id": 31, "name": "New Show"}]}
         ),
+        # id 99 exists as BOTH a movie (no poster) and a tv show (has a
+        # poster) - TMDB shares numeric ids across media types.
+        "/movie/99": httpx.Response(
+            200, json={"id": 99, "title": "Movie 99", "poster_path": None}
+        ),
+        "/tv/99": httpx.Response(
+            200, json={"id": 99, "name": "Show 99", "poster_path": "/tvposter.jpg"}
+        ),
+        "/t/p/w342/tvposter.jpg": httpx.Response(200, content=b"fake-bytes"),
     }
 
     transport = httpx.MockTransport(_make_handler(calls, payloads))
@@ -282,3 +291,16 @@ def test_latest_endpoint_shape(tmdb_app):
     tp = tv_calls[0].url.params
     assert tp.get("first_air_date.lte"), "expected first_air_date.lte on discover/tv"
     assert tp.get("first_air_date.gte"), "expected first_air_date.gte on discover/tv"
+
+
+def test_poster_endpoint_type_aware(tmdb_app):
+    """GET /tmdb/poster/{id}?type=tv resolves the tv show's poster, not the
+    colliding movie (TMDB shares numeric ids across media types)."""
+    tc: TestClient = tmdb_app["client"]
+    # With type=tv, the tv show (id 99) has a poster -> 200 with the bytes.
+    resp = tc.get("/tmdb/poster/99", params={"type": "tv"})
+    assert resp.status_code == 200
+    assert resp.content == b"fake-bytes"
+    # With type=movie, the movie (id 99) has no poster -> 404.
+    resp2 = tc.get("/tmdb/poster/99", params={"type": "movie"})
+    assert resp2.status_code == 404

@@ -250,14 +250,20 @@ class TmdbClient:
             return None
         return f"https://image.tmdb.org/t/p/{size}{path}"
 
-    async def get_poster(self, tmdb_id: int, poster_path: str | None, size: str = "w342") -> Path | None:
-        """Download + cache a poster to disk. Returns the local file path."""
+    async def get_poster(self, tmdb_id: int, poster_path: str | None, size: str = "w342", media_type: str | None = None) -> Path | None:
+        """Download + cache a poster to disk. Returns the local file path.
+
+        media_type (movie/tv) is part of the cache filename because TMDB
+        shares numeric ids across media types - a movie and a tv show can
+        have the same id, so caching by id alone would collide.
+        """
         if not poster_path:
             return None
 
         # Determine extension from URL path
         ext = Path(poster_path).suffix or ".jpg"
-        dest = (self._poster_dir / f"{tmdb_id}{ext}") if self._poster_dir else None
+        name = f"{tmdb_id}-{media_type}{ext}" if media_type in ("movie", "tv") else f"{tmdb_id}{ext}"
+        dest = (self._poster_dir / name) if self._poster_dir else None
         if dest is None:
             return None
 

@@ -75,7 +75,7 @@ async def reviews(request: Request, tmdb_id: int):
 
 
 @router.get("/poster/{tmdb_id}")
-async def poster(request: Request, tmdb_id: int, size: str = Query("w342")):
+async def poster(request: Request, tmdb_id: int, size: str = Query("w342"), media_type: str = Query(None, alias="type")):
     """Serve the cached poster file; downloads + caches on miss."""
     client = get_tmdb_client(request)
     # Prefer the durable local poster_path (offline-safe); fall back to
@@ -88,14 +88,20 @@ async def poster(request: Request, tmdb_id: int, size: str = Query("w342")):
         poster_path = local_poster_path(db_path, tmdb_id)
     if poster_path is None:
         try:
-            details = await client.title(tmdb_id)
+            # TMDB shares numeric ids across media types; a movie-first lookup
+            # can resolve a poster-less movie for a tv id (and vice versa).
+            # Use the caller's type when provided, else the movie-then-tv probe.
+            if media_type in ("movie", "tv"):
+                details = await client.title_typed(tmdb_id, media_type)
+            else:
+                details = await client.title(tmdb_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Title not found")
         poster_path = details.get("poster_path")
     if not poster_path:
         raise HTTPException(status_code=404, detail="No poster available")
 
-    dest = await client.get_poster(tmdb_id, poster_path, size)
+    dest = await client.get_poster(tmdb_id, poster_path, size, media_type)
     if dest is None:
         raise HTTPException(status_code=404, detail="Poster unavailable")
 

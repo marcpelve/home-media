@@ -28,7 +28,12 @@ function esc(s) {
 
 function posterSrc(item) {
   if (item.poster) return API + item.poster; // local poster (continue watching)
-  if (item.poster_path) return API + "/tmdb/poster/" + item.id; // proxy, disk-cached (offline)
+  if (item.poster_path) {
+    // type (movie/tv) disambiguates TMDB's shared numeric ids; without it the
+    // proxy can resolve a poster-less movie for a tv id (and vice versa).
+    const t = item.type ? "?type=" + item.type : "";
+    return API + "/tmdb/poster/" + item.id + t; // proxy, disk-cached (offline)
+  }
   return "";
 }
 
