@@ -1,10 +1,11 @@
 """Trakt API client: Device Code Flow auth + watched/progress data calls.
 
-Auth lives on https://auth.trakt.tv (OAuth, no client_secret - Trakt
-deprecated it for user sign-in); data lives on https://api.trakt.tv. Uses the
-Device Code Flow: request a device code, the user enters it in a browser, we
-poll for the token. Refresh tokens are SINGLE-USE, so each refresh rotates the
-stored pair. Tokens are stored per machine in the local `settings` table.
+Auth lives on https://auth.trakt.tv (OAuth via PKCE - Trakt deprecated the
+client_secret for user sign-in); data lives on https://api.trakt.tv. Uses the
+Device Code Flow with PKCE: request a device code carrying a code_challenge, the
+user enters it in a browser, we poll for the token carrying the code_verifier.
+Refresh tokens are SINGLE-USE, so each refresh rotates the stored pair. Tokens
+are stored per machine in the local `settings` table.
 
 Limits honored: 500 authed GET/5min, 1 authed POST/sec, 429 Retry-After with
 bounded backoff + jitter. The client id is never logged.
@@ -13,7 +14,10 @@ bounded backoff + jitter. The client id is never logged.
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import random
+import secrets
 import sqlite3
 import time
 from pathlib import Path
@@ -34,6 +38,18 @@ _BACKOFF_CAP = 30.0
 _REFRESH_SKEW_S = 300.0
 # OAuth endpoints expect form-encoded bodies, not the client's JSON default.
 _FORM_HEADERS = {"Content-Type": "application/x-www-form-urlencoded"}
+
+
+def _pkce() -> tuple[str, str]:
+    """Return (code_verifier, code_challenge) for the PKCE device flow.
+
+    The verifier is 64 url-safe chars (Trakt wants 43-128); the challenge is
+    base64url(sha256(verifier)) with padding stripped (method S256).
+    """
+    verifier = secrets.token_urlsafe(48)
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    return verifier, challenge
 
 
 class TraktAuthError(Exception):
@@ -184,16 +200,22 @@ class TraktClient:
     async def start_device_login(self) -> dict:
         """Request a device code; the user enters it at the verification URL."""
         client = self._client
+        verifier, challenge = _pkce()
         resp = await client.post(
             f"{self._auth_host}/oauth/device/code",
-            data={"client_id": self._client_id, "scope": SCOPES},
-            headers=_FORM_HEADERS,
+            json={
+                "client_id": self._client_id,
+                "scope": SCOPES,
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+            },
         )
         resp.raise_for_status()
         data = resp.json()
         self._pending = {
             "device_code": data["device_code"],
             "user_code": data["user_code"],
+            "code_verifier": verifier,
             "verification_url": data.get(
                 "verification_url", f"{self._auth_host}/activate"
             ),
@@ -222,11 +244,12 @@ class TraktClient:
             client = self._client
             resp = await client.post(
                 f"{self._auth_host}/oauth/device/token",
-                data={
+                json={
                     "client_id": self._client_id,
-                    "device_code": p["device_code"],
+                    "code": p["device_code"],
+                    "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                    "code_verifier": p["code_verifier"],
                 },
-                headers=_FORM_HEADERS,
             )
             if resp.status_code == 200:
                 data = resp.json()
@@ -242,10 +265,18 @@ class TraktClient:
                     "username": data.get("trakt", {}).get("username"),
                 }
             if resp.status_code == 400:
-                err = resp.json().get("error", "pending")
+                # Trakt sends a JSON error, but can return an empty body during
+                # the auth transition; never let a non-JSON body crash the poll.
+                try:
+                    err = resp.json().get("error", "pending")
+                except (ValueError, TypeError):
+                    err = "pending"
                 if err == "expired_token":
                     self._pending = None
                     return {"status": "expired"}
+                return {"status": "pending"}
+            if resp.status_code == 429:
+                # Rate-limited; the poll loop spaces the next attempt.
                 return {"status": "pending"}
             resp.raise_for_status()
             return {"status": "pending"}

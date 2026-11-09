@@ -7,6 +7,9 @@ retry, push/pull merge, and graceful degradation when unauthenticated.
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
+import json
 import sqlite3
 import time
 from pathlib import Path
@@ -146,6 +149,93 @@ def test_poll_none_when_no_pending(trakt_env):
             return await client.poll_pending()
 
     assert asyncio.run(run())["status"] == "none"
+
+
+def test_poll_pending_tolerates_empty_400_body(tmp_path: Path):
+    """A 400 with a non-JSON/empty body must not crash the poll loop."""
+    db_path = _db(tmp_path)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        host = request.url.host
+        path = request.url.path
+        if host == "auth.trakt.tv":
+            if path == "/oauth/device/code":
+                return httpx.Response(
+                    200,
+                    json={
+                        "device_code": "dev123",
+                        "user_code": "WXYZ-1234",
+                        "verification_url": "https://trakt.tv/activate",
+                        "expires_in": 900,
+                    },
+                )
+            if path == "/oauth/device/token":
+                return httpx.Response(400, content=b"")
+        return httpx.Response(404, json={})
+
+    transport = httpx.MockTransport(handler)
+    http_client = httpx.AsyncClient(
+        base_url="https://api.trakt.tv", transport=transport
+    )
+    client = TraktClient(client_id=MOCK_ID, db_path=db_path, client=http_client)
+
+    async def run():
+        async with client:
+            await client.start_device_login()
+            return await client.poll_pending()
+
+    assert asyncio.run(run())["status"] == "pending"
+    asyncio.run(http_client.aclose())
+
+
+def test_device_flow_sends_pkce_pair(tmp_path: Path):
+    """The code request must carry a code_challenge and the token request the
+    matching code_verifier (S256), per Trakt's PKCE requirement for the flow."""
+    db_path = _db(tmp_path)
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "auth.trakt.tv":
+            if request.url.path == "/oauth/device/code":
+                captured["code"] = json.loads(request.content)
+                return httpx.Response(
+                    200,
+                    json={
+                        "device_code": "dev123",
+                        "user_code": "WXYZ-1234",
+                        "verification_url": "https://trakt.tv/activate",
+                        "expires_in": 900,
+                    },
+                )
+            if request.url.path == "/oauth/device/token":
+                captured["token"] = json.loads(request.content)
+                return httpx.Response(
+                    400, json={"error": "authorization_pending"}
+                )
+        return httpx.Response(404, json={})
+
+    transport = httpx.MockTransport(handler)
+    http_client = httpx.AsyncClient(
+        base_url="https://api.trakt.tv", transport=transport
+    )
+    client = TraktClient(client_id=MOCK_ID, db_path=db_path, client=http_client)
+
+    async def run():
+        async with client:
+            await client.start_device_login()
+            return await client.poll_pending()
+
+    asyncio.run(run())
+    code_body = captured["code"]
+    token_body = captured["token"]
+    assert code_body.get("code_challenge_method") == "S256"
+    challenge = code_body.get("code_challenge")
+    verifier = token_body.get("code_verifier")
+    assert verifier
+    digest = hashlib.sha256(verifier.encode()).digest()
+    expected = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+    assert challenge == expected
+    asyncio.run(http_client.aclose())
 
 
 # ---------------------------------------------------------------------------
