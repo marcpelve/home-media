@@ -48,14 +48,18 @@ def upsert_progress(
             new_id = cur.lastrowid
         else:
             new_id = row["id"]
+            completed_flag = 1 if completed else 0
             conn.execute(
+                # completed is monotonic: a seek-back below the threshold must
+                # not un-complete an already-watched title.
                 "UPDATE watch_progress SET position_ms = ?, duration_ms = ?, "
-                "completed = ?, "
-                "completed_at = CASE WHEN ? THEN datetime('now') ELSE completed_at END, "
+                "completed = MAX(completed, ?), "
+                "completed_at = CASE WHEN completed = 0 AND ? = 1 "
+                "THEN datetime('now') ELSE completed_at END, "
                 "updated_at = datetime('now') WHERE id = ?",
                 (
-                    position_ms, duration_ms, 1 if completed else 0,
-                    1 if completed else 0, new_id,
+                    position_ms, duration_ms, completed_flag,
+                    completed_flag, new_id,
                 ),
             )
         conn.commit()

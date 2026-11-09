@@ -24,6 +24,7 @@ import json
 import os
 import shutil
 import subprocess
+import threading
 import time
 from collections import deque
 from ctypes import wintypes
@@ -70,7 +71,10 @@ _READ_CHUNK = 65536
 class _OVERLAPPED(ctypes.Structure):
     _fields_ = [
         ("Internal", ctypes.c_void_p),
-        ("InternalHigh", wintypes.DWORD),
+        # ULONG_PTR on 64-bit: must be pointer-sized, not DWORD, or the struct
+        # is 4 bytes short and hEvent lands at the wrong offset (heap
+        # corruption in ReadFile/GetOverlappedResult -> segfault).
+        ("InternalHigh", ctypes.c_void_p),
         ("Offset", wintypes.DWORD),
         ("OffsetHigh", wintypes.DWORD),
         ("hEvent", wintypes.HANDLE),
@@ -101,12 +105,22 @@ class Transport(Protocol):
 
 
 class PipeTransport:
-    """Windows named-pipe transport: blocking writes, timed overlapped reads."""
+    """Windows named-pipe transport.
+
+    A dedicated reader thread does the blocking overlapped reads and feeds a
+    shared buffer; read_line() waits on it with a timeout. Doing the reads in
+    the caller's thread with per-read events left the pipe half-cancelled after
+    a timeout, so later reads never completed their event. Keeping every read
+    in one thread keeps the pipe's I/O state consistent.
+    """
 
     def __init__(self, pipe_path: str) -> None:
         self._pipe_path = pipe_path
         self._handle: wintypes.HANDLE | None = None
         self._buf = b""
+        self._cond = threading.Condition()
+        self._eof = False
+        self._reader: threading.Thread | None = None
 
     def connect(self) -> None:
         for _ in range(100):
@@ -120,9 +134,26 @@ class PipeTransport:
             time.sleep(0.1)
         if self._handle is None:
             raise MpvError(f"could not open IPC pipe {self._pipe_path}")
+        # Reset read state: a previous close() (e.g. from stop()) leaves _eof
+        # set, which would make a fresh reader thread exit at once.
+        self._buf = b""
+        self._eof = False
+        self._reader = threading.Thread(target=self._read_loop, daemon=True)
+        self._reader.start()
 
-    def _read_once(self, timeout: float) -> bytes | None:
-        # A fresh event per read: reusing one across reads corrupted state.
+    def _read_loop(self) -> None:
+        while not self._eof:
+            chunk = self._blocking_read()
+            with self._cond:
+                if chunk == b"":
+                    self._eof = True
+                else:
+                    self._buf += chunk
+                self._cond.notify_all()
+
+    def _blocking_read(self) -> bytes:
+        if self._handle is None:
+            return b""
         ev = _k32.CreateEventW(None, True, False, None)
         buf = ctypes.create_string_buffer(_READ_CHUNK)
         ovl = _OVERLAPPED()
@@ -130,30 +161,24 @@ class PipeTransport:
         got = wintypes.DWORD()
         _k32.ReadFile(self._handle, buf, _READ_CHUNK, ctypes.byref(got),
                       ctypes.byref(ovl))
-        rc = _k32.WaitForSingleObject(ev, max(int(timeout * 1000), 0))
-        if rc == _WAIT_TIMEOUT:
-            _k32.CancelSynchronousIo(self._handle)
-            _k32.CloseHandle(ev)
-            return None
+        _k32.WaitForSingleObject(ev, 0xFFFFFFFF)
         _k32.GetOverlappedResult(self._handle, ctypes.byref(ovl),
                                  ctypes.byref(got), False)
         _k32.CloseHandle(ev)
-        if got.value == 0:
-            return b""
         return buf.raw[: got.value]
 
     def read_line(self, timeout: float) -> bytes | None:
-        acc = self._buf
-        while True:
-            chunk = self._read_once(timeout)
-            if chunk is None or chunk == b"":
-                self._buf = acc
-                return None
-            acc += chunk
-            if b"\n" in acc:
-                line, rest = acc.split(b"\n", 1)
-                self._buf = rest
+        deadline = time.monotonic() + timeout
+        with self._cond:
+            while b"\n" not in self._buf and not self._eof:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return None
+                self._cond.wait(remaining)
+            if b"\n" in self._buf:
+                line, self._buf = self._buf.split(b"\n", 1)
                 return line
+            return None
 
     def write(self, data: bytes) -> None:
         sent = wintypes.DWORD()
@@ -169,6 +194,9 @@ class PipeTransport:
         if self._handle is not None:
             _k32.CloseHandle(self._handle)
             self._handle = None
+        with self._cond:
+            self._eof = True
+            self._cond.notify_all()
 
 
 class MpvClient:
@@ -252,6 +280,18 @@ class MpvClient:
 
     def set_position(self, seconds: float) -> None:
         self.command(["set_property", "time-pos", seconds])
+
+    def wait_loaded(self, timeout: float = 15.0) -> bool:
+        # A seek before the file loads is a no-op, so wait for duration.
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                if self.get_property("duration") is not None:
+                    return True
+            except MpvError:
+                pass
+            time.sleep(0.2)
+        return False
 
     def get_property(self, name: str):
         reply = self.command(["get_property", name])

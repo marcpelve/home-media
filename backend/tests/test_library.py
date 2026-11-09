@@ -10,6 +10,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from app import library as lib
+from app import watch
 from app.db import init_db
 from app.main import app
 
@@ -154,6 +155,22 @@ def test_watch_progress_specific_episode(tmp_path):
         # season without episode -> falls back to current-episode (S01E01)
         body = client.get("/watch/progress/123", params={"season": 1}).json()
         assert body["episode"] == 1
+
+
+def test_upsert_progress_completed_is_sticky(tmp_path):
+    db_path, _, _ = _seed(tmp_path)
+    # Crossing the threshold marks it complete.
+    watch.upsert_progress(
+        str(db_path), 456, position_ms=54000, duration_ms=60000, completed=True
+    )
+    # A later save below the threshold (seek-back) must not un-complete it.
+    watch.upsert_progress(
+        str(db_path), 456, position_ms=5000, duration_ms=60000, completed=False
+    )
+    row = watch.get_progress(str(db_path), 456)
+    assert row is not None
+    assert row["completed"] == 1
+    assert row["position_ms"] == 5000  # position updated, completed preserved
 
 
 def test_watch_complete_movie(tmp_path):

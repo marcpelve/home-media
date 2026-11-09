@@ -35,6 +35,11 @@ class ProgressRequest(BaseModel):
     episode: int | None = None
 
 
+# Auto-mark a title/episode watched once this fraction of the runtime has
+# elapsed - covers skipping end credits without a manual mark.
+COMPLETE_FRACTION = 0.90
+
+
 def _client(request: Request) -> MpvClient:
     return request.app.state.mpv
 
@@ -59,9 +64,10 @@ def play(req: PlayRequest, request: Request):
     target = _target(req)
     client.ensure_running()
     client.play(target)
-    # Resume: seek to the saved position. mpv applies the seek after the
-    # loadfile that preceded it, in command order.
+    # Resume: seek to the saved position. A seek before the file loads is a
+    # no-op in mpv, so wait for it to load first.
     if req.start_seconds and req.start_seconds > 0:
+        client.wait_loaded()
         client.set_position(req.start_seconds)
     return {"playing": target, "position": _safe_position(client)}
 
@@ -98,7 +104,7 @@ def save_progress(req: ProgressRequest, request: Request):
     pos = client.read_position()
     position_ms = int((pos.get("time_pos") or 0) * 1000)
     duration_ms = int((pos.get("duration") or 0) * 1000)
-    completed = duration_ms > 0 and position_ms >= duration_ms - 5000
+    completed = duration_ms > 0 and position_ms >= COMPLETE_FRACTION * duration_ms
     row = watch.upsert_progress(
         request.app.state.db_path,
         req.title_id,
