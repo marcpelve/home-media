@@ -360,6 +360,41 @@ class TestCocoDriverScrape:
         # 4K ranks above 1080p (both pass the 1080p+ / 10+ seeder filters)
         assert [r["quality"] for r in results] == ["4K", "1080p"]
 
+    def test_scrape_dolby_vision_and_hdr_rank_within_quality(self):
+        from app.coco_driver import scrape, build_movie_data
+
+        class HdrSource:
+            def sources(self, data, hostDict):
+                return [
+                    # 4K tier: DV (few seeders) must beat HDR (more) must beat
+                    # no-HDR (most) - capability outranks seeders within a tier.
+                    {"hash": "k4k_dv", "magnet": "m", "quality": "4K",
+                     "size": "70 GB", "seeders": 12,
+                     "name": "Movie.4K.Dolby.Vision.HDR10"},
+                    {"hash": "k4k_hdr", "magnet": "m", "quality": "4K",
+                     "size": "60 GB", "seeders": 40,
+                     "name": "Movie.4K.HDR10"},
+                    {"hash": "k4k_plain", "magnet": "m", "quality": "4K",
+                     "size": "50 GB", "seeders": 90,
+                     "name": "Movie.4K.x264"},
+                    # 1080p tier: DV before no-HDR even with fewer seeders.
+                    {"hash": "k1080_dv", "magnet": "m", "quality": "1080p",
+                     "size": "15 GB", "seeders": 11,
+                     "name": "Movie.1080p.Dolby.Vision"},
+                    {"hash": "k1080_plain", "magnet": "m", "quality": "1080p",
+                     "size": "8 GB", "seeders": 60,
+                     "name": "Movie.1080p.x264"},
+                ]
+
+        with patch("app.coco_driver.cocoscrapers.sources",
+                   return_value=[("hdr", HdrSource)]):
+            data = build_movie_data("Movie", "2020", "tt123")
+            results = scrape(data)
+        # 4K is primary; within each tier DV > HDR > no-HDR, then seeders.
+        assert [r["hash"] for r in results] == [
+            "k4k_dv", "k4k_hdr", "k4k_plain", "k1080_dv", "k1080_plain",
+        ]
+
     def test_scrape_filters_sub_1080p(self):
         from app.coco_driver import scrape, build_movie_data
 

@@ -100,7 +100,9 @@ def _parse_capabilities(name_info: str, name: str) -> list[str]:
     elif "av1" in tokens:
         tags.append("AV1")
     # HDR
-    if tokens & {"dovi", "dv", "dvhdr", "dolbyvision"}:
+    # "Dolby Vision" appears as the fused/abbrev token in cleaned names and as
+    # the two tokens "dolby" + "vision" in raw dotted names - catch both.
+    if tokens & {"dovi", "dv", "dvhdr", "dolbyvision"} or ({"dolby", "vision"} <= tokens):
         tags.append("Dolby Vision")
     if tokens & {"hdr10", "hdr10plus"}:
         tags.append("HDR10")
@@ -123,6 +125,17 @@ def _parse_capabilities(name_info: str, name: str) -> list[str]:
     if "dts" in tokens:
         tags.append("DTS")
     return tags
+
+
+def _cap_tier(tags):
+    """Sort rank for a source's HDR capability: Dolby Vision (0) beats any
+    other HDR flavor (1), which beats no HDR (2). Used to order DV/HDR
+    releases ahead of the rest within each quality tier."""
+    if "Dolby Vision" in tags:
+        return 0
+    if {"HDR", "HDR10", "HLG"} & set(tags):
+        return 1
+    return 2
 
 
 def _size_gb(size_str: str) -> float:
@@ -163,9 +176,10 @@ def scrape(data: dict) -> list[dict]:
 
     Sources are scraped concurrently (thread pool) and filtered to
     MIN_QUALITY_RANK (1080p+) and MIN_SEEDERS. Returns [{hash, magnet, quality,
-    size, seeders, provider, name, tags}] sorted by (quality desc, seeders
-    desc, size desc). `tags` are capability labels parsed from the release
-    name (Dolby Vision, HDR10, HEVC, BluRay, ...).
+    size, seeders, provider, name, tags}] sorted by (quality desc, then
+    Dolby Vision > HDR > no-HDR, then seeders desc, size desc). `tags` are
+    capability labels parsed from the release name (Dolby Vision, HDR10, HEVC,
+    BluRay, ...).
     """
     source_list = cocoscrapers.sources(ret_all=False)
 
@@ -193,12 +207,14 @@ def scrape(data: dict) -> list[dict]:
         s for s in best_by_hash.values()
         if _quality_rank(s["quality"]) >= MIN_QUALITY_RANK and s["seeders"] >= MIN_SEEDERS
     ]
+    # Quality (4K before 1080p) is primary; within each tier, Dolby Vision
+    # beats HDR beats no-HDR, then seeders, then size.
     ranked.sort(
         key=lambda x: (
-            _quality_rank(x["quality"]),
-            x["seeders"],
-            _size_gb(x["size"]),
-        ),
-        reverse=True,
+            -_quality_rank(x["quality"]),
+            _cap_tier(x["tags"]),
+            -x["seeders"],
+            -_size_gb(x["size"]),
+        )
     )
     return ranked
