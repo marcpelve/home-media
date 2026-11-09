@@ -25,8 +25,8 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "externalBin": [
-      "binaries/home-media"
+    "resources": [
+      "resources/home-media"
     ],
     "icon": [
       "icons/icon.ico",

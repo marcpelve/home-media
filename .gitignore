@@ -27,6 +27,7 @@ backend/dist/
 backend/build-console/
 target/
 desktop/dist/
+desktop/src-tauri/resources/home-media/
 
 # Node
 node_modules/
