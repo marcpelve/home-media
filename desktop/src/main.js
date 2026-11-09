@@ -493,6 +493,16 @@ function renderNowPlaying(d, source, season, episode) {
 async function renderSearch(q, category) {
   stopPlayPoll();
   category = category || "all";
+  // Empty query: show a prompt and focus the search box; no API call.
+  if (!q) {
+    app.innerHTML = "";
+    const box = el("div", "boot");
+    box.appendChild(el("p", "muted", "Search for a movie or show to add it to your library."));
+    app.appendChild(box);
+    if (searchInput) searchInput.focus();
+    window.scrollTo(0, 0);
+    return;
+  }
   const key = "search:" + q;
   let res = cacheGet(key);
   if (!res) { res = await api(`/tmdb/search?q=${encodeURIComponent(q)}`); cacheSet(key, res); }
