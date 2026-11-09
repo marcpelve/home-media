@@ -35,7 +35,15 @@ def _db(tmp_path: Path) -> str:
     return str(db_path)
 
 
-def _make_handler(state: dict, progress_payload: list, movies_payload: list):
+def _make_handler(
+    state: dict,
+    progress_payload: list,
+    movies_payload: list,
+    history_payload: list | None = None,
+):
+    if history_payload is None:
+        history_payload = []
+
     def handler(request: httpx.Request) -> httpx.Response:
         host = request.url.host
         path = request.url.path
@@ -85,6 +93,8 @@ def _make_handler(state: dict, progress_payload: list, movies_payload: list):
                 return httpx.Response(200, json=progress_payload)
             if path.endswith("/movies/watched"):
                 return httpx.Response(200, json=movies_payload)
+            if path.endswith("/history"):
+                return httpx.Response(200, json=history_payload)
         return httpx.Response(404, json={})
 
     return handler
@@ -94,7 +104,7 @@ def _make_handler(state: dict, progress_payload: list, movies_payload: list):
 def trakt_env(tmp_path: Path):
     db_path = _db(tmp_path)
     state = {"polls": 0, "scrobbles": []}
-    transport = httpx.MockTransport(_make_handler(state, [], []))
+    transport = httpx.MockTransport(_make_handler(state, [], [], []))
     http_client = httpx.AsyncClient(
         base_url="https://api.trakt.tv", transport=transport
     )
@@ -433,25 +443,29 @@ def test_push_progress_noop_unauthenticated(trakt_env):
     assert asyncio.run(run()) == 0
 
 
-def test_pull_progress_merges_in_progress(tmp_path: Path):
+def test_pull_progress_merges_episode_from_history(tmp_path: Path):
     db_path = _db(tmp_path)
     conn = sqlite3.connect(db_path)
     conn.execute(
-        "INSERT INTO titles (tmdb_id, type, title) VALUES (155, 'movie', 'T')"
+        "INSERT INTO titles (tmdb_id, type, title) VALUES (66732, 'tv', 'S')"
     )
     title_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     conn.commit()
     conn.close()
     state = {"scrobbles": []}
-    progress_payload = [
+    history_payload = [
         {
-            "node": {"type": "movie", "ids": {"tmdb": 155}, "runtime": 120},
-            "progress": {"percent": 50.0},
-            "completed": False,
+            "type": "episode",
+            "episode": {
+                "ids": {"tmdb": 99999},
+                "show": {"ids": {"tmdb": 66732}},
+                "season": 1,
+                "number": 2,
+            },
         }
     ]
     transport = httpx.MockTransport(
-        _make_handler(state, progress_payload, [])
+        _make_handler(state, [], [], history_payload)
     )
     http_client = httpx.AsyncClient(
         base_url="https://api.trakt.tv", transport=transport
@@ -463,7 +477,9 @@ def test_pull_progress_merges_in_progress(tmp_path: Path):
         async with client:
             return await pull_progress(client, db_path)
 
-    assert asyncio.run(run()) == 1
+    merged, errors = asyncio.run(run())
+    assert errors == []
+    assert merged == 1
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     row = conn.execute(
@@ -471,9 +487,9 @@ def test_pull_progress_merges_in_progress(tmp_path: Path):
     ).fetchone()
     conn.close()
     assert row is not None
-    # 50% of 120 min (7200000 ms) = 3600000 ms.
-    assert row["position_ms"] == 3600000
-    assert row["duration_ms"] == 7200000
+    assert row["season"] == 1
+    assert row["episode"] == 2
+    assert row["completed"] == 1
 
 
 def test_pull_progress_marks_watched_movie_completed(tmp_path: Path):
@@ -486,10 +502,12 @@ def test_pull_progress_marks_watched_movie_completed(tmp_path: Path):
     conn.commit()
     conn.close()
     state = {"scrobbles": []}
-    movies_payload = [
-        {"type": "movie", "ids": {"tmdb": 155}, "completed": True}
+    history_payload = [
+        {"type": "movie", "movie": {"ids": {"tmdb": 155}}}
     ]
-    transport = httpx.MockTransport(_make_handler(state, [], movies_payload))
+    transport = httpx.MockTransport(
+        _make_handler(state, [], [], history_payload)
+    )
     http_client = httpx.AsyncClient(
         base_url="https://api.trakt.tv", transport=transport
     )
@@ -500,7 +518,9 @@ def test_pull_progress_marks_watched_movie_completed(tmp_path: Path):
         async with client:
             return await pull_progress(client, db_path)
 
-    assert asyncio.run(run()) == 1
+    merged, errors = asyncio.run(run())
+    assert errors == []
+    assert merged == 1
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     row = conn.execute(

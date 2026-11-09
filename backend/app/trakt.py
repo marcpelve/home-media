@@ -363,6 +363,19 @@ class TraktClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def get_history(self) -> list:
+        """The user's recent watch history (movies + episodes), newest first.
+
+        Uses /users/{u}/history, which works with history:read (no
+        scrobble:post needed, unlike /progress/watched).
+        """
+        username = self._username()
+        resp = await self._authed_get(
+            f"/users/{username}/history", {"extended": "full", "limit": 100}
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     async def get_watched_episodes(self, show_tmdb_id: int) -> list:
         username = self._username()
         resp = await self._authed_get(
@@ -388,3 +401,11 @@ class TraktClient:
         )
         resp.raise_for_status()
         return resp.json()
+
+    async def get_username(self) -> str | None:
+        """Fetch the authenticated username from /users/me (None on failure)."""
+        try:
+            me = (await self._authed_get("/users/me")).json()
+            return me.get("username")
+        except Exception:
+            return None

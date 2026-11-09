@@ -151,104 +151,107 @@ async def push_progress(client: TraktClient, db_path) -> int:
         conn.close()
 
 
-async def pull_progress(client: TraktClient, db_path) -> int:
-    """Pull Trakt in-progress + watched movies; merge into local progress.
+async def pull_progress(client: TraktClient, db_path) -> tuple[int, list[str]]:
+    """Pull the user's Trakt watch history; merge into local progress.
 
-    Returns the number of local rows created/updated. No-op (0) when
-    unauthenticated.
+    Uses /users/{u}/history (history:read), which works without scrobble:post.
+    Returns (merged_count, partial_errors). No-op (0, []) when unauthenticated.
     """
     if not client.is_authenticated():
-        return 0
+        return 0, []
     conn = _conn(db_path)
     merged = 0
+    errors: list[str] = []
     try:
-        # In-progress items (movies + episodes) from /progress/watched.
-        for entry in await client.get_progress():
-            if not isinstance(entry, dict):
+        try:
+            history = await client.get_history()
+        except Exception as e:
+            errors.append(f"history: {type(e).__name__}")
+            history = []
+        for item in history:
+            if not isinstance(item, dict):
                 continue
-            node = entry.get("node") or {}
-            tmdb_id = (node.get("ids") or {}).get("tmdb")
-            if not tmdb_id:
-                continue
-            title = _local_title_by_tmdb(conn, int(tmdb_id))
-            if title is None:
-                continue
-            season = _ep(node, "season")
-            episode = _ep(node, "number")
-            position_ms, duration_ms = _progress_ms(node, entry)
-            row = _find_progress(conn, title["id"], season, episode)
-            if row is None:
-                conn.execute(
-                    "INSERT INTO watch_progress (title_id, season, episode, "
-                    "position_ms, duration_ms, completed) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    (title["id"], season, episode, position_ms, duration_ms,
-                     1 if entry.get("completed") else 0),
-                )
-                merged += 1
-            else:
-                new_completed = row["completed"] or entry.get("completed")
-                conn.execute(
-                    "UPDATE watch_progress SET position_ms = ?, duration_ms = ?, "
-                    "completed = ?, completed_at = ? WHERE id = ?",
-                    (
-                        max(row["position_ms"], position_ms),
-                        max(row["duration_ms"], duration_ms),
-                        int(new_completed),
-                        _now_sqlite(conn) if new_completed else row["completed_at"],
-                        row["id"],
-                    ),
-                )
-                merged += 1
-        # Watched movies -> mark completed.
-        for movie in await client.get_watched_movies():
-            if not isinstance(movie, dict):
-                continue
-            tmdb_id = (movie.get("ids") or {}).get("tmdb")
-            if not tmdb_id:
-                continue
-            title = _local_title_by_tmdb(conn, int(tmdb_id))
-            if title is None:
-                continue
-            row = _find_progress(conn, title["id"], None, None)
-            if row is None:
-                conn.execute(
-                    "INSERT INTO watch_progress (title_id, position_ms, duration_ms, "
-                    "completed) VALUES (?, 0, 0, 1)",
-                    (title["id"],),
-                )
-                merged += 1
-            elif not row["completed"]:
-                conn.execute(
-                    "UPDATE watch_progress SET completed = 1, completed_at = ? "
-                    "WHERE id = ?",
-                    (_now_sqlite(conn), row["id"]),
-                )
-                merged += 1
+            typ = item.get("type")
+            if typ == "movie":
+                node = item.get("movie") or {}
+                tmdb_id = (node.get("ids") or {}).get("tmdb")
+                if not tmdb_id:
+                    continue
+                title = _local_title_by_tmdb(conn, int(tmdb_id))
+                if title is None:
+                    continue
+                row = _find_progress(conn, title["id"], None, None)
+                if row is None:
+                    conn.execute(
+                        "INSERT INTO watch_progress (title_id, position_ms, "
+                        "duration_ms, completed) VALUES (?, 0, 0, 1)",
+                        (title["id"],),
+                    )
+                    merged += 1
+                elif not row["completed"]:
+                    conn.execute(
+                        "UPDATE watch_progress SET completed = 1, completed_at = ? "
+                        "WHERE id = ?",
+                        (_now_sqlite(conn), row["id"]),
+                    )
+                    merged += 1
+            elif typ == "episode":
+                node = item.get("episode") or {}
+                show_tmdb = ((node.get("show") or {}).get("ids") or {}).get("tmdb")
+                if not show_tmdb:
+                    continue
+                title = _local_title_by_tmdb(conn, int(show_tmdb))
+                if title is None:
+                    continue
+                season = node.get("season")
+                number = node.get("number")
+                row = _find_progress(conn, title["id"], season, number)
+                if row is None:
+                    conn.execute(
+                        "INSERT INTO watch_progress (title_id, season, episode, "
+                        "position_ms, duration_ms, completed) "
+                        "VALUES (?, ?, ?, 0, 0, 1)",
+                        (title["id"], season, number),
+                    )
+                    merged += 1
+                elif not row["completed"]:
+                    conn.execute(
+                        "UPDATE watch_progress SET completed = 1, completed_at = ? "
+                        "WHERE id = ?",
+                        (_now_sqlite(conn), row["id"]),
+                    )
+                    merged += 1
         conn.commit()
-        return merged
     finally:
         conn.close()
+    return merged, errors
 
 
 async def sync_all(client: TraktClient, db_path) -> dict:
     """Push local changes to Trakt, pull Trakt activity, record status.
 
-    Degrades gracefully: no auth / offline -> no crash, error recorded. Returns
-    {pushed, pulled, error}.
+    Degrades gracefully: no auth / offline / partial API failure -> no crash,
+    error recorded, local keeps working. Returns {pushed, pulled, error}.
     """
     if not client.is_authenticated():
         _record_sync(db_path, 0, "not authenticated")
         return {"pushed": 0, "pulled": 0, "error": "not authenticated"}
     pushed = 0
     pulled = 0
-    error = None
+    errors: list[str] = []
     try:
         pushed = await push_progress(client, db_path)
-        pulled = await pull_progress(client, db_path)
     except TraktAuthError as e:
-        error = f"auth: {e}"
-    except Exception as e:  # network / API error - local keeps working
-        error = f"{type(e).__name__}: {e}"
+        errors.append(f"push auth: {e}")
+    except Exception as e:
+        errors.append(f"push: {type(e).__name__}: {e}")
+    try:
+        pulled, pull_errors = await pull_progress(client, db_path)
+        errors.extend(pull_errors)
+    except TraktAuthError as e:
+        errors.append(f"pull auth: {e}")
+    except Exception as e:
+        errors.append(f"pull: {type(e).__name__}: {e}")
+    error = "; ".join(errors) if errors else None
     _record_sync(db_path, pushed + pulled, error)
     return {"pushed": pushed, "pulled": pulled, "error": error}

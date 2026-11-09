@@ -52,6 +52,16 @@ async def poll_auth(request: Request) -> dict:
 async def status(request: Request) -> dict:
     client = _client(request)
     tokens = client.load_tokens()
+    username = tokens["username"] if tokens else None
+    # Self-heal a placeholder username by fetching the real account.
+    if tokens and (not username or username == "unknown"):
+        real = await client.get_username()
+        if real:
+            client.save_tokens(
+                real, tokens["access_token"], tokens["refresh_token"],
+                tokens["expires_at"],
+            )
+            username = real
     conn = sqlite3.connect(_db_path(request))
     conn.row_factory = sqlite3.Row
     row = conn.execute(
@@ -60,7 +70,7 @@ async def status(request: Request) -> dict:
     conn.close()
     return {
         "authenticated": client.is_authenticated(),
-        "username": tokens["username"] if tokens else None,
+        "username": username,
         "last_sync": (
             {
                 "last_sync_at": row["last_sync_at"],
