@@ -29,6 +29,12 @@ TRENDING = {"results": [{"id": 10, "title": "Trending"}]}
 GENRE_MOVIE = {"genres": [{"id": 1, "name": "Drama"}]}
 GENRE_TV = {"genres": [{"id": 2, "name": "Comedy"}]}
 TITLE_DETAILS = {"id": 55, "title": "Some Movie", "poster_path": "/abc.jpg"}
+TV_DETAILS = {
+    "id": 77,
+    "name": "Some Show",
+    "first_air_date": "2016-01-11",
+    "external_ids": {"imdb_id": "tt123"},
+}
 REVIEWS = {"results": [{"id": 99, "content": "Great!"}]}
 
 
@@ -59,6 +65,7 @@ def tmdb_app(tmp_path: Path):
         "/genre/list/movie": httpx.Response(200, json=GENRE_MOVIE),
         "/genre/list/tv": httpx.Response(200, json=GENRE_TV),
         "/movie/55": httpx.Response(200, json=TITLE_DETAILS),
+        "/tv/77": httpx.Response(200, json=TV_DETAILS),
         "/movie/55/reviews": httpx.Response(200, json=REVIEWS),
     }
 
@@ -198,6 +205,26 @@ def test_title_endpoint_shape(tmdb_app):
     assert data["id"] == 55
     assert data["title"] == "Some Movie"
     assert data["_type"] == "movie"
+
+
+def test_title_tv_endpoint_fetches_external_ids(tmdb_app):
+    """GET /tmdb/title/{id} for a TV show requests external_ids (for imdb_id)."""
+    tc: TestClient = tmdb_app["client"]
+    calls: list[httpx.Request] = tmdb_app["calls"]
+
+    before = len(calls)
+    resp = tc.get("/tmdb/title/77")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["_type"] == "tv"
+    assert data["name"] == "Some Show"
+    # imdb_id is available via external_ids
+    assert (data.get("external_ids") or {}).get("imdb_id") == "tt123"
+
+    # The tv fetch must have requested append_to=external_ids
+    tv_calls = [c for c in calls[before:] if str(c.url.path).endswith("/tv/77")]
+    assert tv_calls, "expected a tv/77 request"
+    assert tv_calls[0].url.params.get("append_to") == "external_ids"
 
 
 def test_reviews_endpoint_shape(tmdb_app):

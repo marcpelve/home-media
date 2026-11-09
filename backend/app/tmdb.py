@@ -162,7 +162,8 @@ class TmdbClient:
             return data
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
-                data = await self._fetch(f"tv/{tmdb_id}", TTL_DETAILS)
+                # Base tv responses omit imdb_id; pull it from external_ids.
+                data = await self._fetch(f"tv/{tmdb_id}", TTL_DETAILS, {"append_to": "external_ids"})
                 data["_type"] = "tv"
                 return data
             raise
