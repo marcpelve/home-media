@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 # Make cocoscrapers importable as a top-level package before importing it.
@@ -83,43 +84,58 @@ def _as_int(value) -> int:
         return 0
 
 
+def _scrape_source(name: str, source_class, data: dict) -> list[tuple[str, dict]]:
+    """Run one scraper in a worker thread; return (provider, raw) pairs.
+
+    Each scraper is a blocking urllib call, so running them in a thread pool
+    turns the sum of their latencies into the max.
+    """
+    try:
+        instance = source_class()
+        results = instance.sources(data, {})
+    except Exception:
+        return []
+    return [(name, r) for r in (results or []) if isinstance(r, dict) and r.get("hash")]
+
+
+# Minimum quality rank to surface (1080p and up). Lower tiers (720p, SD, CAM,
+# SCR) are dropped - sub-1080p content is never wanted.
+MIN_QUALITY_RANK = _QUALITY_RANK["1080p"]
+# Minimum seeders to surface. Torrents with fewer are dropped as unreliable.
+MIN_SEEDERS = 10
+
+
 def scrape(data: dict) -> list[dict]:
     """Run all enabled Cocoscrapers sources and return a ranked source list.
 
-    Returns [{hash, magnet, quality, size, seeders, provider}] sorted by
-    (quality desc, seeders desc, size desc).
+    Sources are scraped concurrently (thread pool) and filtered to
+    MIN_QUALITY_RANK (1080p+) and MIN_SEEDERS. Returns [{hash, magnet, quality,
+    size, seeders, provider}] sorted by (quality desc, seeders desc, size desc).
     """
     source_list = cocoscrapers.sources(ret_all=False)
 
     best_by_hash: dict[str, dict] = {}
+    with ThreadPoolExecutor(max_workers=max(1, len(source_list))) as pool:
+        futures = [pool.submit(_scrape_source, name, cls, data) for name, cls in source_list]
+        for fut in futures:
+            for name, r in fut.result():
+                h = str(r.get("hash", "")).lower()  # normalize for dedupe
+                seeders = _as_int(r.get("seeders", 0))
+                prev = best_by_hash.get(h)
+                if prev is None or seeders > prev.get("seeders", 0):
+                    best_by_hash[h] = {
+                        "hash": h,
+                        "magnet": r.get("magnet", ""),
+                        "quality": r.get("quality", "SD"),
+                        "size": r.get("size", ""),
+                        "seeders": seeders,
+                        "provider": name,
+                    }
 
-    for name, source_class in source_list:
-        try:
-            instance = source_class()
-            results = instance.sources(data, {})
-        except Exception:
-            continue
-
-        for r in (results or []):
-            if not isinstance(r, dict):
-                continue
-            h = r.get("hash", "")
-            if not h:
-                continue
-            h = str(h).lower()  # hashes are case-insensitive; normalize for dedupe
-            seeders = _as_int(r.get("seeders", 0))
-            prev = best_by_hash.get(h)
-            if prev is None or seeders > prev.get("seeders", 0):
-                best_by_hash[h] = {
-                    "hash": h,
-                    "magnet": r.get("magnet", ""),
-                    "quality": r.get("quality", "SD"),
-                    "size": r.get("size", ""),
-                    "seeders": seeders,
-                    "provider": name,
-                }
-
-    ranked = list(best_by_hash.values())
+    ranked = [
+        s for s in best_by_hash.values()
+        if _quality_rank(s["quality"]) >= MIN_QUALITY_RANK and s["seeders"] >= MIN_SEEDERS
+    ]
     ranked.sort(
         key=lambda x: (
             _quality_rank(x["quality"]),

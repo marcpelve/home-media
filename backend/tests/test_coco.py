@@ -260,16 +260,14 @@ class TestCocoDriverScrape:
             data = build_movie_data("Movie", "2020", "tt123")
             results = scrape(data)
 
-        assert len(results) == 3
+        assert len(results) == 2
         # 4K should be first
         assert results[0]["hash"] == "ghi789"
         assert results[0]["quality"] == "4K"
         # 1080p with 80 seeders (deduped winner) should be second
         assert results[1]["hash"] == "abc123"
         assert results[1]["seeders"] == 80
-        # 720p last
-        assert results[2]["hash"] == "def456"
-        assert results[2]["quality"] == "720p"
+        # (def456, 720p, is filtered out: only 1080p+ with 10+ seeders remain)
 
     def test_scrape_dedupes_by_hash(self):
         from app.coco_driver import scrape, build_movie_data
@@ -312,7 +310,7 @@ class TestCocoDriverScrape:
         class GoodSource:
             def sources(self, data, hostDict):
                 return [{"hash": "h1", "magnet": "m", "quality": "1080p",
-                         "size": "1 GB", "seeders": 5}]
+                         "size": "1 GB", "seeders": 50}]
 
         class BadSource:
             def sources(self, data, hostDict):
@@ -331,24 +329,60 @@ class TestCocoDriverScrape:
         class MultiSource:
             def sources(self, data, hostDict):
                 return [
-                    {"hash": "h_sd", "magnet": "m", "quality": "SD",
-                     "size": "0.5 GB", "seeders": 100},
-                    {"hash": "h_4k", "magnet": "m", "quality": "4K",
-                     "size": "5 GB", "seeders": 1},
-                    {"hash": "h_cam", "magnet": "m", "quality": "CAM",
-                     "size": "0.3 GB", "seeders": 200},
                     {"hash": "h_1080", "magnet": "m", "quality": "1080p",
                      "size": "1.5 GB", "seeders": 50},
-                    {"hash": "h_720", "magnet": "m", "quality": "720p",
-                     "size": "0.8 GB", "seeders": 80},
+                    {"hash": "h_4k", "magnet": "m", "quality": "4K",
+                     "size": "5 GB", "seeders": 50},
                 ]
 
         with patch("app.coco_driver.cocoscrapers.sources",
                    return_value=[("multi", MultiSource)]):
             data = build_movie_data("Movie", "2020", "tt123")
             results = scrape(data)
-        qualities = [r["quality"] for r in results]
-        assert qualities == ["4K", "1080p", "720p", "SD", "CAM"]
+        # 4K ranks above 1080p (both pass the 1080p+ / 10+ seeder filters)
+        assert [r["quality"] for r in results] == ["4K", "1080p"]
+
+    def test_scrape_filters_sub_1080p(self):
+        from app.coco_driver import scrape, build_movie_data
+
+        class LowSource:
+            def sources(self, data, hostDict):
+                return [
+                    {"hash": "h_720", "magnet": "m", "quality": "720p",
+                     "size": "0.8 GB", "seeders": 100},
+                    {"hash": "h_sd", "magnet": "m", "quality": "SD",
+                     "size": "0.5 GB", "seeders": 100},
+                    {"hash": "h_cam", "magnet": "m", "quality": "CAM",
+                     "size": "0.3 GB", "seeders": 100},
+                    {"hash": "h_1080", "magnet": "m", "quality": "1080p",
+                     "size": "1.5 GB", "seeders": 50},
+                ]
+
+        with patch("app.coco_driver.cocoscrapers.sources",
+                   return_value=[("low", LowSource)]):
+            data = build_movie_data("Movie", "2020", "tt123")
+            results = scrape(data)
+        # 720p, SD, CAM are dropped; only 1080p+ remains.
+        assert [r["quality"] for r in results] == ["1080p"]
+
+    def test_scrape_filters_low_seeders(self):
+        from app.coco_driver import scrape, build_movie_data
+
+        class LowSeederSource:
+            def sources(self, data, hostDict):
+                return [
+                    {"hash": "h_few", "magnet": "m", "quality": "1080p",
+                     "size": "1.5 GB", "seeders": 5},
+                    {"hash": "h_many", "magnet": "m", "quality": "1080p",
+                     "size": "1.5 GB", "seeders": 25},
+                ]
+
+        with patch("app.coco_driver.cocoscrapers.sources",
+                   return_value=[("seeders", LowSeederSource)]):
+            data = build_movie_data("Movie", "2020", "tt123")
+            results = scrape(data)
+        # The 5-seeder source is dropped; only the 25-seeder one remains.
+        assert [r["hash"] for r in results] == ["h_many"]
 
 
 # ---------------------------------------------------------------------------

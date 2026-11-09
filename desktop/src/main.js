@@ -462,6 +462,13 @@ function openSourcePicker(d, sources, btn, seasonSel, episodeSel) {
     : `${sources.length} sources`;
   panel.appendChild(sub);
 
+  // Make it explicit that downloads resolve through the Torbox debrid, not a
+  // direct torrent (the user's ISP should never see a raw peer connection).
+  const via = el("div", "via");
+  via.appendChild(el("span", "badge debrid", "Torbox debrid"));
+  via.appendChild(el("span", "via-note", "- downloads resolve via debrid, no direct torrent"));
+  panel.appendChild(via);
+
   const list = el("div", "src-list");
   for (const s of sources) {
     const row = el("div", "src-row");
@@ -515,7 +522,7 @@ async function pickSource(d, source, seasonSel, episodeSel) {
 
 async function startPlayback(d, btn, seasonSel, episodeSel) {
   btn.disabled = true;
-  btn.textContent = "Finding sources...";
+  btn.textContent = "Finding sources via Torbox...";
   try {
     const body = d._type === "tv"
       ? { season: seasonSel ? Number(seasonSel.value) : 1, episode: episodeSel ? Number(episodeSel.value) : 1 }
