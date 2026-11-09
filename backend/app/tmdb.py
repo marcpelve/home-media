@@ -155,16 +155,39 @@ class TmdbClient:
         return {"movie": movie.get("results", []), "tv": tv.get("results", [])}
 
     async def latest(self) -> dict:
-        """Latest releases: most recently released movies + first-aired shows.
+        """Latest releases: recently-released movies + recently-aired shows.
 
-        /discover sorted by release date - the /movie/latest endpoints return a
-        single object, not a list, so they can't fill a row.
+        /discover over a recent window (release/air date between 60 days ago
+        and today), sorted by popularity. This excludes upcoming titles, which
+        carry future release dates - the primary_release_date sort surfaces
+        those and ignores the date filters, so a popularity sort is used. The
+        date params change daily, so the cache key refreshes the row each day.
         """
         import asyncio as _aio
+        from datetime import date, timedelta
 
+        today = date.today()
+        window = (today - timedelta(days=60)).isoformat()
+        today_s = today.isoformat()
         movie, tv = await _aio.gather(
-            self._fetch("discover/movie", TTL_HOME, {"sort_by": "primary_release_date.desc"}),
-            self._fetch("discover/tv", TTL_HOME, {"sort_by": "first_air_date.desc"}),
+            self._fetch(
+                "discover/movie",
+                TTL_HOME,
+                {
+                    "sort_by": "popularity.desc",
+                    "release_date.gte": window,
+                    "release_date.lte": today_s,
+                },
+            ),
+            self._fetch(
+                "discover/tv",
+                TTL_HOME,
+                {
+                    "sort_by": "popularity.desc",
+                    "first_air_date.gte": window,
+                    "first_air_date.lte": today_s,
+                },
+            ),
         )
         return {"movie": movie.get("results", []), "tv": tv.get("results", [])}
 

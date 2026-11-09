@@ -260,10 +260,25 @@ def test_popular_endpoint_shape(tmdb_app):
 
 
 def test_latest_endpoint_shape(tmdb_app):
-    """GET /tmdb/latest returns {movie: [...], tv: [...]} via /discover."""
+    """GET /tmdb/latest returns {movie: [...], tv: [...]} via /discover,
+    filtered to a recent window (no upcoming/future titles)."""
     tc: TestClient = tmdb_app["client"]
+    calls: list[httpx.Request] = tmdb_app["calls"]
     resp = tc.get("/tmdb/latest")
     assert resp.status_code == 200
     data = resp.json()
     assert data["movie"] == [{"id": 30, "title": "New Movie"}]
     assert data["tv"] == [{"id": 31, "name": "New Show"}]
+    # The discover calls must use a recent window (date lte today) so upcoming
+    # titles with future dates are excluded, and a popularity sort (the
+    # primary_release_date sort ignores the date filters).
+    movie_calls = [c for c in calls if str(c.url.path).endswith("/discover/movie")]
+    assert movie_calls, "expected a discover/movie request"
+    mp = movie_calls[0].url.params
+    assert mp.get("release_date.lte"), "expected release_date.lte on discover/movie"
+    assert mp.get("release_date.gte"), "expected release_date.gte on discover/movie"
+    tv_calls = [c for c in calls if str(c.url.path).endswith("/discover/tv")]
+    assert tv_calls, "expected a discover/tv request"
+    tp = tv_calls[0].url.params
+    assert tp.get("first_air_date.lte"), "expected first_air_date.lte on discover/tv"
+    assert tp.get("first_air_date.gte"), "expected first_air_date.gte on discover/tv"
