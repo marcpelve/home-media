@@ -20,6 +20,12 @@ function el(tag, cls, text) {
   return n;
 }
 
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+  ));
+}
+
 function posterSrc(item) {
   if (item.poster) return API + item.poster; // local /tmdb/poster proxy
   if (item.poster_path) return `https://image.tmdb.org/t/p/w342${item.poster_path}`;
@@ -46,6 +52,7 @@ function cacheSet(key, val) {
 function renderView(view, params) {
   if (view === "search") return renderSearch(params.query, params.category || "all");
   if (view === "detail") return openDetail(params.id);
+  if (view === "settings") return renderSettings();
   if (view === "nowplaying") {
     renderNowPlaying(cacheGet("detail:" + params.id) || {}, params.source, params.season, params.episode);
     return;
@@ -89,6 +96,7 @@ function updateBackButton() {
 
 document.getElementById("back").addEventListener("click", navBack);
 document.getElementById("home").addEventListener("click", navHome);
+document.getElementById("settings").addEventListener("click", () => navPush("settings", {}));
 
 function makeCard(item, { withProgress = false } = {}) {
   const card = el("div", "card");
@@ -493,6 +501,90 @@ function stepSelect(el, delta) {
   el.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
+/* Settings: Trakt sign-in (device flow) + sync */
+async function renderSettings() {
+  const app = document.getElementById("app");
+  app.innerHTML =
+    '<div class="settings"><h1>Settings</h1>' +
+    '<section class="trakt-panel" id="trakt-panel"><h2>Trakt</h2>' +
+    '<p class="muted">Loading&hellip;</p></section></div>';
+  await loadTraktStatus();
+}
+
+async function loadTraktStatus() {
+  const panel = document.getElementById("trakt-panel");
+  if (!panel) return;
+  let st;
+  try { st = await api("/trakt/status"); }
+  catch (e) { panel.innerHTML = '<h2>Trakt</h2><p class="muted">Status unavailable.</p>'; return; }
+  if (st.authenticated) {
+    let syncLine = "";
+    if (st.last_sync) {
+      syncLine = '<p class="muted">Last sync: ' + esc(st.last_sync.last_sync_at) +
+        (st.last_sync.last_error ? ' &mdash; ' + esc(st.last_sync.last_error) : '') + '</p>';
+    }
+    panel.innerHTML = '<h2>Trakt</h2>' +
+      '<p>Connected as <strong>' + esc(st.username || "unknown") + '</strong></p>' +
+      syncLine +
+      '<button class="btn" id="trakt-sync">Sync now</button>' +
+      '<p class="trakt-msg muted" id="trakt-msg"></p>';
+    const b = document.getElementById("trakt-sync");
+    if (b) b.addEventListener("click", doTraktSync);
+  } else {
+    panel.innerHTML = '<h2>Trakt</h2>' +
+      '<p class="muted">Not connected. Sign in to sync watch history and continue-watching.</p>' +
+      '<button class="btn" id="trakt-signin">Sign in with Trakt</button>' +
+      '<div class="trakt-auth-flow" id="trakt-auth-flow"></div>';
+    const b = document.getElementById("trakt-signin");
+    if (b) b.addEventListener("click", startTraktAuth);
+  }
+}
+
+let traktPollTimer = null;
+async function startTraktAuth() {
+  const flow = document.getElementById("trakt-auth-flow");
+  if (!flow) return;
+  flow.innerHTML = '<p class="muted">Requesting code&hellip;</p>';
+  let res;
+  try { res = await api("/trakt/auth", { method: "POST" }); }
+  catch (e) { flow.innerHTML = '<p class="muted">Could not start sign-in: ' + esc(e.message) + '</p>'; return; }
+  flow.innerHTML =
+    '<p>Enter this code at the link, then approve:</p>' +
+    '<div class="user-code">' + esc(res.user_code) + '</div>' +
+    '<a class="btn" href="' + esc(res.verification_url) + '" target="_blank" rel="noopener">Open ' + esc(res.verification_url) + '</a>' +
+    '<p class="trakt-msg muted">Waiting for approval&hellip;</p>';
+  pollTraktAuth();
+}
+
+function pollTraktAuth() {
+  if (traktPollTimer) clearInterval(traktPollTimer);
+  traktPollTimer = setInterval(async () => {
+    let st;
+    try { st = await api("/trakt/auth"); } catch (e) { return; }
+    const msg = document.querySelector("#trakt-auth-flow .trakt-msg");
+    if (st.status === "authorized") {
+      clearInterval(traktPollTimer); traktPollTimer = null;
+      if (msg) msg.textContent = "Connected as " + (st.username || "your account") + ".";
+      setTimeout(loadTraktStatus, 800);
+    } else if (st.status === "expired") {
+      clearInterval(traktPollTimer); traktPollTimer = null;
+      if (msg) msg.textContent = "The code expired. Sign in again.";
+    }
+  }, 5000);
+}
+
+async function doTraktSync() {
+  const msg = document.getElementById("trakt-msg");
+  if (msg) msg.textContent = "Syncing&hellip;";
+  let res;
+  try { res = await api("/trakt/sync", { method: "POST" }); }
+  catch (e) { if (msg) msg.textContent = "Sync failed: " + e.message; return; }
+  if (msg) msg.textContent = res.error
+    ? "Sync: " + res.error + " (pushed " + res.pushed + ", pulled " + res.pulled + ")"
+    : "Synced: pushed " + res.pushed + ", pulled " + res.pulled + ".";
+  setTimeout(loadTraktStatus, 600);
+}
+
 document.addEventListener("keydown", (e) => {
   const search = document.getElementById("search");
   const inSearch = document.activeElement === search;
@@ -504,6 +596,7 @@ document.addEventListener("keydown", (e) => {
     search.blur();
   }
   if (e.key === "/") { e.preventDefault(); search.focus(); return; }
+  if (!inSearch && e.key === "s") { e.preventDefault(); navPush("settings", {}); return; }
 
   const cur = currentFocus();
   if (cur && cur.tagName === "SELECT") {
