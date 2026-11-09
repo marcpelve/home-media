@@ -238,6 +238,62 @@ def test_device_flow_sends_pkce_pair(tmp_path: Path):
     asyncio.run(http_client.aclose())
 
 
+def test_poll_pending_fetches_username_when_absent(tmp_path: Path):
+    """The real token response carries no username; the client fetches it from
+    /users/me and stores it."""
+    db_path = _db(tmp_path)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        host = request.url.host
+        path = request.url.path
+        if host == "auth.trakt.tv":
+            if path == "/oauth/device/code":
+                return httpx.Response(
+                    200,
+                    json={
+                        "device_code": "dev123",
+                        "user_code": "WXYZ-1234",
+                        "verification_url": "https://trakt.tv/activate",
+                        "expires_in": 900,
+                    },
+                )
+            if path == "/oauth/device/token":
+                # Real Trakt: no username in the token response.
+                return httpx.Response(
+                    200,
+                    json={
+                        "access_token": "at1",
+                        "token_type": "Bearer",
+                        "expires_in": 604800,
+                        "refresh_token": "rt1",
+                    },
+                )
+            return httpx.Response(404, json={})
+        if host == "api.trakt.tv":
+            if path == "/users/me":
+                return httpx.Response(200, json={"username": "Exorbis"})
+        return httpx.Response(404, json={})
+
+    transport = httpx.MockTransport(handler)
+    http_client = httpx.AsyncClient(
+        base_url="https://api.trakt.tv", transport=transport
+    )
+    client = TraktClient(client_id=MOCK_ID, db_path=db_path, client=http_client)
+
+    async def run():
+        async with client:
+            await client.start_device_login()
+            return await client.poll_pending()
+
+    result = asyncio.run(run())
+    assert result["status"] == "authorized"
+    assert result["username"] == "Exorbis"
+    tokens = client.load_tokens()
+    assert tokens is not None
+    assert tokens["username"] == "Exorbis"
+    asyncio.run(http_client.aclose())
+
+
 # ---------------------------------------------------------------------------
 # Token rotation (single-use refresh)
 # ---------------------------------------------------------------------------

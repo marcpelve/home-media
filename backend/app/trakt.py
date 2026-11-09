@@ -253,16 +253,34 @@ class TraktClient:
             )
             if resp.status_code == 200:
                 data = resp.json()
+                expires_at = time.time() + data.get("expires_in", 604800)
+                username = data.get("trakt", {}).get("username")
                 self.save_tokens(
-                    data.get("trakt", {}).get("username", "unknown"),
+                    username or "unknown",
                     data["access_token"],
                     data["refresh_token"],
-                    time.time() + data.get("expires_in", 604800),
+                    expires_at,
                 )
+                # The token response carries no username; fetch it now that the
+                # token is stored so status/re-auth show the real account.
+                if not username:
+                    try:
+                        username = (await self._authed_get("/users/me")).json().get(
+                            "username"
+                        )
+                    except Exception:
+                        username = None
+                    if username:
+                        self.save_tokens(
+                            username,
+                            data["access_token"],
+                            data["refresh_token"],
+                            expires_at,
+                        )
                 self._pending = None
                 return {
                     "status": "authorized",
-                    "username": data.get("trakt", {}).get("username"),
+                    "username": username,
                 }
             if resp.status_code == 400:
                 # Trakt sends a JSON error, but can return an empty body during
