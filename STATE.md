@@ -98,9 +98,20 @@ Full design: PLAN.md. This file tracks multi-session progress.
   -> Back -> search -> Esc -> home, and 2D grid arrow movement. Kept light:
   CSS grid (no JS layout), lazy poster images, in-memory data cache, native
   history API - no framework.
+- (2026-11-09) P6 continued: Trakt sign-in / sync panel (commits 16e68b2,
+  f9c7b32). Added a settings view reachable from a gear button in the top bar
+  or the s key: shows Trakt auth status, the device-code sign-in flow (user
+  code + activate link + polling), and a sync trigger. Backend: /trakt/status
+  self-heals a stored "unknown" username by re-fetching /users/me; the sync
+  pull now uses /users/{u}/history (history:read) instead of /progress/watched
+  + /movies/watched, which need the scrobble:post scope the exo app lacks. Per-
+  source errors are collected so one 403/405 no longer aborts the whole sync.
+  85 backend tests pass; browser-verified the panel shows the connected user
+  and a clean sync result.
 
 ## Next
-- [-] P6: Frontend (home screen done; source picking, playback UI, Trakt panel pending)
+- [-] P6: Frontend (home, search, detail, picker, playback UI, Trakt panel
+  done; E2E playback still blocked on a real Torbox API key)
 - P7: Packaging.
 - (deferred) Tauri sidecar/process management - let the Tauri app own the
   backend lifecycle instead of starting it separately.

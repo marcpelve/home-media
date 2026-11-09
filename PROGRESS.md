@@ -26,7 +26,7 @@ Design: PLAN.md  ·  Detailed log: STATE.md  ·  This file: live phase progress.
 - [-] Source picking + one-click play (picker UI + keyboard nav done; E2E blocked on Torbox key)
 - [-] Playback + progress display (now-playing view done; E2E blocked on Torbox key)
 - [x] Arrow-key / 10-foot keyboard navigation (home, search, detail, picker)
-- [ ] Trakt sign-in / sync panel
+- [x] Trakt sign-in / sync panel (auth status, device-code flow, sync)
 
 ## Legend
 
