@@ -54,10 +54,27 @@ Full design: PLAN.md. This file tracks multi-session progress.
   playback triggers an intermittent Windows ctypes access violation in the
   overlapped pipe read (needs a native debugger to root-cause); not exercised
   in e2e.
+- (2026-11-08) P5: Trakt (Device Code Flow + local tracking fallback) on branch
+  trakt. TraktClient (Device Code Flow with PKCE - exo is a public client with
+  no secret - plus Token Refresh Rotation), token storage in the settings
+  table, graceful degradation when unauthenticated/offline, /trakt router
+  (auth, status, sync) and sync.py (push local progress, pull Trakt activity,
+  merge with local as source of truth: max position, union of completed). Easy
+  sign-in CLI (backend/trakt_auth.py). 18/18 trakt tests pass; verified live.
+- (2026-11-09) P6 in progress: frontend home screen. Added CORS middleware to
+  main.py (the webview fetches the API cross-origin) and a /watch router
+  (Continue Watching: local watch_progress rows enriched with cached TMDB
+  metadata). Built the desktop home screen in vanilla JS (no bundler):
+  Continue Watching row (with progress bars), Trending row (/tmdb/home),
+  debounced search (movies + TV), and a title detail view with a Play button
+  wired to sources -> resolve -> play. Verified in a real browser: home
+  renders 20 trending cards, search "matrix" returns 30 results, detail shows
+  The Matrix with overview + Play, Continue Watching shows a progress bar at
+  the correct percentage. Also fixed /sources to read imdb_id from the
+  top-level TMDB title object (it was looking in external_ids).
 
 ## Next
-- P5: Trakt (Device Code Flow) + local tracking fallback.
-- P6: Frontend.
+- [-] P6: Frontend (home screen done; source picking, playback UI, Trakt panel pending)
 - P7: Packaging.
 - (deferred) Tauri sidecar/process management - let the Tauri app own the
   backend lifecycle instead of starting it separately.
