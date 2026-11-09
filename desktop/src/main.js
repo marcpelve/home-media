@@ -146,7 +146,12 @@ async function renderHome() {
     if (row) app.appendChild(row);
   }
   if (watch.status === "rejected" && home.status === "rejected") {
-    app.appendChild(el("p", "muted", "Backend unreachable. Is it running on 127.0.0.1:8790?"));
+    const box = el("div", "boot");
+    box.appendChild(el("p", "muted", "Backend unreachable."));
+    const btn = el("button", "btn", "Retry");
+    btn.addEventListener("click", () => renderHome());
+    box.appendChild(btn);
+    app.appendChild(box);
   }
 }
 
@@ -619,7 +624,52 @@ document.addEventListener("keydown", (e) => {
 // Rebuild the focus map whenever the app DOM changes (after each render).
 new MutationObserver(() => buildFocusMap()).observe(app, { childList: true, subtree: true });
 
-// Initial load: establish the home history entry, then render.
-history.replaceState({ view: "home", params: {}, scroll: 0 }, "", "");
-renderHome();
-updateBackButton();
+// ---- startup grace ----
+// The desktop webview loads before the sidecar binds :8790, so poll /health
+// until the backend is up (or time out) before rendering. This turns the
+// "frontend loads first" race into a brief "Starting..." state instead of a
+// dead-end error screen.
+async function ensureBackend(timeoutMs = 20000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    try {
+      const res = await fetch(API + "/health");
+      if (res.ok) return;
+    } catch (_) {
+      // not up yet
+    }
+    await new Promise((r) => setTimeout(r, 750));
+  }
+  throw new Error("backend timeout");
+}
+
+function bootScreen(lines) {
+  app.innerHTML = "";
+  const box = el("div", "boot");
+  for (const t of lines) box.appendChild(el("p", "muted pulse", t));
+  app.appendChild(box);
+  return box;
+}
+
+function showBackendDown(retryFn) {
+  const box = bootScreen(["Backend didn't start."]);
+  const btn = el("button", "btn", "Retry");
+  btn.addEventListener("click", retryFn);
+  box.appendChild(btn);
+}
+
+async function boot() {
+  history.replaceState({ view: "home", params: {}, scroll: 0 }, "", "");
+  bootScreen(["Starting..."]);
+  try {
+    await ensureBackend();
+  } catch (_) {
+    showBackendDown(boot);
+    updateBackButton();
+    return;
+  }
+  renderHome();
+  updateBackButton();
+}
+
+boot();
