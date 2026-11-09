@@ -30,6 +30,66 @@ function stopPlayPoll() {
   if (playPollTimer) { clearInterval(playPollTimer); playPollTimer = null; }
 }
 
+// ---- navigation / history (lightweight SPA back-stack) ----
+// Back returns to the previous screen (and where you were in it), not always
+// home. The stack is the browser's native pushState/popstate (cheap, and it
+// wires the browser/remote back button for free). A small bounded in-memory
+// data cache makes back instant - no re-fetch, no rebuild from scratch - so
+// it stays light on low-end hardware.
+const dataCache = new Map();
+function cacheGet(key) { return dataCache.get(key); }
+function cacheSet(key, val) {
+  if (dataCache.size >= 40) dataCache.delete(dataCache.keys().next().value);
+  dataCache.set(key, val);
+}
+
+function renderView(view, params) {
+  if (view === "search") return renderSearch(params.query, params.category || "all");
+  if (view === "detail") return openDetail(params.id);
+  if (view === "nowplaying") {
+    renderNowPlaying(cacheGet("detail:" + params.id) || {}, params.source, params.season, params.episode);
+    return;
+  }
+  return renderHome();
+}
+
+function navPush(view, params) {
+  history.pushState({ view, params, scroll: window.scrollY }, "", "");
+  renderView(view, params);
+  updateBackButton();
+}
+
+function navBack() {
+  if (history.state && history.state.view && history.state.view !== "home") history.back();
+  else navHome();
+}
+
+function navHome() {
+  if (!history.state || history.state.view !== "home") {
+    history.pushState({ view: "home", params: {}, scroll: 0 }, "", "");
+    renderHome();
+  } else {
+    window.scrollTo(0, 0);
+  }
+  updateBackButton();
+}
+
+window.addEventListener("popstate", (e) => {
+  const s = e.state;
+  if (!s || s.view === "home") renderHome();
+  else renderView(s.view, s.params);
+  requestAnimationFrame(() => window.scrollTo(0, (s && s.scroll) || 0));
+  updateBackButton();
+});
+
+function updateBackButton() {
+  const b = document.getElementById("back");
+  if (b) b.classList.toggle("hidden", !(history.state && history.state.view && history.state.view !== "home"));
+}
+
+document.getElementById("back").addEventListener("click", navBack);
+document.getElementById("home").addEventListener("click", navHome);
+
 function makeCard(item, { withProgress = false } = {}) {
   const card = el("div", "card");
   const img = el("img", "poster");
@@ -48,7 +108,7 @@ function makeCard(item, { withProgress = false } = {}) {
     meta.appendChild(progress);
   }
   card.appendChild(meta);
-  card.addEventListener("click", () => openDetail(item.id));
+  card.addEventListener("click", () => navPush("detail", { id: item.id }));
   return card;
 }
 
@@ -84,7 +144,9 @@ async function renderHome() {
 
 async function openDetail(id) {
   try {
-    const d = await api(`/tmdb/title/${id}`);
+    const key = "detail:" + id;
+    let d = cacheGet(key);
+    if (!d) { d = await api(`/tmdb/title/${id}`); cacheSet(key, d); }
     renderDetail(d);
   } catch (e) {
     app.appendChild(el("p", "muted", "Could not load details: " + e.message));
@@ -203,7 +265,7 @@ async function pickSource(d, source, seasonSel, episodeSel) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url: resolved.download_url, file_path: label }),
     });
-    renderNowPlaying(d, source, season, episode);
+    navPush("nowplaying", { id: d.id, source, season, episode });
   } catch (e) {
     alert("Playback failed: " + e.message);
   }
@@ -289,7 +351,7 @@ function renderNowPlaying(d, source, season, episode) {
       await api("/play/progress", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title_id: d.id, season, episode }) });
     } catch (e) { /* best-effort save */ }
     await api("/play/quit", { method: "POST" });
-    renderDetail(d);
+    navBack();
   });
 
   playPollTimer = setInterval(async () => {
@@ -303,23 +365,50 @@ function renderNowPlaying(d, source, season, episode) {
   }, 2000);
 }
 
-async function renderSearch(q) {
+async function renderSearch(q, category) {
   stopPlayPoll();
-  const res = await api(`/tmdb/search?q=${encodeURIComponent(q)}`);
+  category = category || "all";
+  const key = "search:" + q;
+  let res = cacheGet(key);
+  if (!res) { res = await api(`/tmdb/search?q=${encodeURIComponent(q)}`); cacheSet(key, res); }
+  renderSearchGrid(q, res, category);
+}
+
+function renderSearchGrid(q, res, category) {
   app.innerHTML = "";
-  const rows = [];
-  if (res.movie && res.movie.length) rows.push(makeRow("Movies", res.movie));
-  if (res.tv && res.tv.length) rows.push(makeRow("TV Shows", res.tv));
-  for (const r of rows) app.appendChild(r);
-  if (!rows.length) app.appendChild(el("p", "muted", `No results for "${q}".`));
+  const tabs = el("div", "cat-tabs");
+  for (const [val, label] of [["all", "All"], ["movie", "Movies"], ["tv", "TV"]]) {
+    const t = el("button", "cat-tab" + (val === category ? " active" : ""), label);
+    t.addEventListener("click", () => renderSearchGrid(q, res, val));
+    tabs.appendChild(t);
+  }
+  app.appendChild(tabs);
+  let items = [];
+  if (category !== "movie") items = items.concat(res.movie || []);
+  if (category !== "tv") items = items.concat(res.tv || []);
+  if (!items.length) { app.appendChild(el("p", "muted", `No results for "${q}".`)); return; }
+  const grid = el("div", "grid");
+  for (const it of items) grid.appendChild(makeCard(it));
+  app.appendChild(grid);
 }
 
 let searchTimer = null;
 searchInput.addEventListener("input", () => {
   clearTimeout(searchTimer);
   const q = searchInput.value.trim();
-  if (!q) { renderHome(); return; }
-  searchTimer = setTimeout(() => renderSearch(q), 300);
+  if (!q) { navHome(); return; }
+  searchTimer = setTimeout(() => {
+    const st = history.state;
+    if (st && st.view === "search") {
+      // Refine the current search in place - don't flood the back-stack.
+      const cat = (st.params && st.params.category) || "all";
+      history.replaceState({ view: "search", params: { query: q, category: cat }, scroll: 0 }, "", "");
+      renderSearch(q, cat);
+      updateBackButton();
+    } else {
+      navPush("search", { query: q, category: "all" });
+    }
+  }, 300);
 });
 
 // ---- keyboard / focus navigation (10-foot / TV UI) ----
@@ -333,18 +422,38 @@ let focusCol = 0;
 function focusables() {
   const overlay = document.querySelector(".overlay");
   if (overlay) return [...overlay.querySelectorAll(".src-row, .btn")];
-  return [...document.querySelectorAll(".card, .btn, .src-row, select")];
+  return [...app.querySelectorAll(".card, .btn, .src-row, select")];
 }
 
 function buildFocusMap() {
   const els = focusables();
+  const rows = [];
+  const inGrid = new Set();
+  // Vertical grids: group cards by their visual row (shared offsetTop) so
+  // arrows navigate 2D across and along the grid. offsetTop forces layout,
+  // so this is reliable even right after the DOM update.
+  for (const g of app.querySelectorAll(".grid")) {
+    const cards = [...g.querySelectorAll(":scope > .card")];
+    const byTop = new Map();
+    for (const c of cards) {
+      const top = c.offsetTop;
+      if (!byTop.has(top)) byTop.set(top, []);
+      byTop.get(top).push(c);
+    }
+    for (const [top, rowCards] of [...byTop.entries()].sort((a, b) => a[0] - b[0])) {
+      rows.push(rowCards);
+      for (const c of rowCards) inGrid.add(c);
+    }
+  }
+  // Everything else: one focus row per container (.cards/.info/.np-controls/.ep-picker).
   const byRow = new Map();
   for (const e of els) {
+    if (inGrid.has(e)) continue;
     const rowEl = e.closest(".cards, .info, .np-controls, .ep-picker") || e;
     if (!byRow.has(rowEl)) byRow.set(rowEl, []);
     byRow.get(rowEl).push(e);
   }
-  focusRows = [...byRow.values()];
+  focusRows = rows.concat([...byRow.values()]);
   focusRow = 0;
   focusCol = 0;
   setFocus(0, 0);
@@ -374,7 +483,7 @@ function goBack() {
     buildFocusMap();
     return;
   }
-  renderHome();
+  navBack();
 }
 
 function stepSelect(el, delta) {
@@ -412,4 +521,7 @@ document.addEventListener("keydown", (e) => {
 // Rebuild the focus map whenever the app DOM changes (after each render).
 new MutationObserver(() => buildFocusMap()).observe(app, { childList: true, subtree: true });
 
+// Initial load: establish the home history entry, then render.
+history.replaceState({ view: "home", params: {}, scroll: 0 }, "", "");
 renderHome();
+updateBackButton();
