@@ -21,7 +21,8 @@ Design: PLAN.md  ·  Detailed log: STATE.md  ·  This file: live phase progress.
 ## P6 - current focus
 
 - [-] Library browsing (Continue Watching + Trending done; My List, hero pending)
-- [x] Search + title detail view
+- [x] Search + title detail view (vertical grid + category tabs)
+- [x] Back navigation (history stack) + clickable home (logo)
 - [-] Source picking + one-click play (picker UI + keyboard nav done; E2E blocked on Torbox key)
 - [-] Playback + progress display (now-playing view done; E2E blocked on Torbox key)
 - [x] Arrow-key / 10-foot keyboard navigation (home, search, detail, picker)

@@ -84,6 +84,20 @@ Full design: PLAN.md. This file tracks multi-session progress.
   rendered). Browser-verified: home/search/detail/picker all navigate by
   keyboard; source rows render and step with Up/Down. E2E playback is blocked
   on a real Torbox API key (resolve is API-gated; the scrape itself works).
+- (2026-11-09) P6 continued: search UX + real back navigation (commit 25a3b40).
+  Search results are now a vertical CSS grid (auto-fill/minmax) with category
+  tabs (All/Movies/TV) at the top instead of one horizontal row per category;
+  tabs filter the already-fetched results in memory (no extra network calls).
+  Added a lightweight history back-stack using native pushState/popstate plus a
+  small bounded in-memory data cache, so Back returns to the previous screen
+  and scroll position (search -> show -> back returns to the search, not home)
+  rather than always going home. The logo is now a clickable home button, and a
+  back arrow appears in the top bar on non-home views. Keyboard nav now handles
+  the grid 2D (Left/Right across a visual row, Up/Down between rows).
+  Browser-verified: grid + tabs, category filtering (10+20=30), card -> detail
+  -> Back -> search -> Esc -> home, and 2D grid arrow movement. Kept light:
+  CSS grid (no JS layout), lazy poster images, in-memory data cache, native
+  history API - no framework.
 
 ## Next
 - [-] P6: Frontend (home screen done; source picking, playback UI, Trakt panel pending)
