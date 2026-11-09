@@ -136,31 +136,19 @@ function makeRow(title, items, opts) {
 async function renderHome() {
   stopPlayPoll();
   app.innerHTML = "";
-  const [watch, home, library] = await Promise.allSettled([
+  const [watch, home] = await Promise.allSettled([
     api("/watch"),
     api("/tmdb/home"),
-    api("/library"),
   ]);
   if (watch.status === "fulfilled") {
     const row = makeRow("Continue Watching", watch.value.items, { withProgress: true });
     if (row) app.appendChild(row);
   }
-  if (library.status === "fulfilled") {
-    const items = library.value.titles || [];
-    if (items.length) {
-      const row = el("section", "row");
-      row.appendChild(el("h2", null, "My Library"));
-      const cards = el("div", "cards");
-      for (const t of items.slice(0, 12)) cards.appendChild(makeLibraryCard(t));
-      row.appendChild(cards);
-      app.appendChild(row);
-    }
-  }
   if (home.status === "fulfilled") {
     const row = makeRow("Trending This Week", home.value.results || []);
     if (row) app.appendChild(row);
   }
-  if (watch.status === "rejected" && home.status === "rejected" && library.status === "rejected") {
+  if (watch.status === "rejected" && home.status === "rejected") {
     const box = el("div", "boot");
     box.appendChild(el("p", "muted", "Backend unreachable."));
     const btn = el("button", "btn", "Retry");

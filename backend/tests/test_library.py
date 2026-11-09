@@ -109,6 +109,8 @@ def test_upsert_title_and_local_poster(tmp_path):
     with TestClient(app) as client:
         app.state.db_path = str(db_path)
         by_id = {t["tmdb_id"]: t for t in client.get("/library").json()["titles"]}
-        assert 789 in by_id
-        assert by_id[789]["title"] == "New Movie"
-        assert by_id[789]["year"] == 2018
+        # 789 has metadata but no local file, so it must NOT appear in the
+        # library (a viewed-but-not-downloaded title is not part of it).
+        assert 789 not in by_id
+        # The seeded titles (which have local files) still appear.
+        assert 123 in by_id and 456 in by_id

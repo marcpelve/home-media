@@ -118,7 +118,9 @@ def build_library(db_path: str) -> dict:
     finally:
         conn.close()
 
-    ids = set(files) | {k[0] for k in progress} | set(titles)
+    # Only titles with at least one local file belong in the library. A title
+    # that was merely viewed (metadata upserted) but not downloaded is excluded.
+    ids = set(files)
     out = []
     for tid in sorted(ids):
         meta = _meta_for(db_path, tid, titles.get(tid))
