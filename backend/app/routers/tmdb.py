@@ -50,10 +50,15 @@ async def categories(request: Request):
 
 
 @router.get("/title/{tmdb_id}")
-async def title(request: Request, tmdb_id: int):
+async def title(request: Request, tmdb_id: int, media_type: str = Query(None, alias="type")):
     client = get_tmdb_client(request)
     try:
-        data = await client.title(tmdb_id)
+        # Prefer the caller's known type (home cards carry media_type) so a tv
+        # id that collides with a movie id is not mis-typed as a movie.
+        if media_type in ("movie", "tv"):
+            data = await client.title_typed(tmdb_id, media_type)
+        else:
+            data = await client.title(tmdb_id)
     except Exception:
         raise HTTPException(status_code=404, detail="Title not found")
     # Persist durable metadata so the offline library can resolve this title.

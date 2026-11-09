@@ -6,6 +6,7 @@ const app = document.getElementById("app");
 const searchInput = document.getElementById("search");
 
 let playPollTimer = null;
+let nowPlaying = null; // { id, season, episode } of the current playback
 
 async function api(path, opts) {
   const res = await fetch(API + path, opts);
@@ -142,7 +143,7 @@ function renderView(view, params) {
   if (sourcePrefetchTimer) { clearTimeout(sourcePrefetchTimer); sourcePrefetchTimer = null; }
   if (view !== "detail") abortStalePrefetch(null);
   if (view === "search") return renderSearch(params.query, params.category || "all");
-  if (view === "detail") return openDetail(params.id);
+  if (view === "detail") return openDetail(params.id, params.type);
   if (view === "settings") return renderSettings();
   if (view === "library") return renderLibrary();
   if (view === "librarytitle") return openLibraryTitle(params.id);
@@ -191,6 +192,32 @@ document.getElementById("back").addEventListener("click", navBack);
 document.getElementById("home").addEventListener("click", navHome);
 document.getElementById("library").addEventListener("click", () => navPush("library", {}));
 document.getElementById("settings").addEventListener("click", () => navPush("settings", {}));
+document.getElementById("power").addEventListener("click", exitAndSync);
+
+// ---- sync & quit ----
+// The power button fires a best-effort Trakt sync in the background (like
+// the source prefetch), then asks before quitting. Cancel: stay (the sync
+// finishes quietly). Confirm: stop playback and close the window.
+function exitAndSync() {
+  const btn = document.getElementById("power");
+  if (btn) { btn.classList.add("syncing"); btn.title = "Syncing..."; }
+  api("/trakt/sync", { method: "POST" }).catch(() => {});
+  if (!confirm("Quit Home Media?")) return;
+  if (nowPlaying) {
+    api("/play/progress", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(nowPlaying),
+    }).catch(() => {});
+  }
+  stopPlayPoll();
+  nowPlaying = null;
+  api("/play/quit", { method: "POST" }).catch(() => {});
+  setTimeout(() => {
+    if (window.__TAURI__) window.__TAURI__.window.getCurrent().close();
+    else window.close();
+  }, 300);
+}
 
 function makeCard(item, { withProgress = false } = {}) {
   const card = el("div", "card");
@@ -215,7 +242,7 @@ function makeCard(item, { withProgress = false } = {}) {
     meta.appendChild(progress);
   }
   card.appendChild(meta);
-  card.addEventListener("click", () => navPush("detail", { id: item.id }));
+  card.addEventListener("click", () => navPush("detail", { id: item.id, type: item.type }));
   return card;
 }
 
@@ -432,10 +459,11 @@ async function playLocal(t, ep) {
   try {
     const season = t.type === "tv" && ep.episode != null ? 1 : null;
     const episode = ep.episode != null ? ep.episode : null;
+    const start = await savedStartSeconds(t.tmdb_id, season, episode);
     await api("/play", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ file_path: ep.file_path }),
+      body: JSON.stringify({ file_path: ep.file_path, start_seconds: start }),
     });
     cacheSet("detail:" + t.tmdb_id, { ...t, id: t.tmdb_id });
     navPush("nowplaying", { id: t.tmdb_id, source: { quality: "Local" }, season, episode });
@@ -444,11 +472,15 @@ async function playLocal(t, ep) {
   }
 }
 
-async function openDetail(id) {
+async function openDetail(id, type) {
   try {
     const key = "detail:" + id;
     let d = cacheGet(key);
-    if (!d) { d = await api(`/tmdb/title/${id}`); cacheSet(key, d); }
+    if (!d) {
+      const qs = (type === "movie" || type === "tv") ? "?type=" + type : "";
+      d = await api(`/tmdb/title/${id}${qs}`);
+      cacheSet(key, d);
+    }
     let currentEp = null;
     if (d._type === "tv") {
       // Cheap localhost read of local watch progress; defaults the picker and
@@ -525,12 +557,56 @@ function renderDetail(d, currentEp) {
   btn.addEventListener("click", () => startPlayback(d, btn, seasonSel, episodeSel));
   info.appendChild(btn);
 
+  // Mark-as-watched controls (manual). A movie marks the title; a show marks
+  // the selected episode, or the whole season.
+  const actionRow = el("div", "btn-row");
+  if (d._type === "tv") {
+    const epBtn = el("button", "btn btn-ghost", "Mark episode watched");
+    epBtn.addEventListener("click", () => markComplete(
+      d, Number(seasonSel.value), Number(episodeSel.value), false, epBtn));
+    const seasonBtn = el("button", "btn btn-ghost", "Mark season watched");
+    const cnt = d.seasons.find((s) => s.season_number === Number(seasonSel.value));
+    seasonBtn.addEventListener("click", () => markComplete(
+      d, Number(seasonSel.value), Number(episodeSel.value), true, seasonBtn,
+      cnt ? cnt.episode_count || 1 : 1));
+    actionRow.appendChild(epBtn);
+    actionRow.appendChild(seasonBtn);
+  } else {
+    const mBtn = el("button", "btn btn-ghost", "Mark as watched");
+    mBtn.addEventListener("click", () => markComplete(d, null, null, false, mBtn));
+    actionRow.appendChild(mBtn);
+  }
+  info.appendChild(actionRow);
+
   wrap.appendChild(info);
   app.appendChild(wrap);
   window.scrollTo(0, 0);
   // Kick off the background source prefetch once the user has settled on the
   // card (debounced), so Play can show a populated or near-instant list.
   schedulePrefetch(d, seasonSel, episodeSel);
+}
+
+// POST /watch/complete for the current selection. wholeSeason marks every
+// episode in the season (1..episodeCount).
+async function markComplete(d, season, episode, wholeSeason, btn, episodeCount) {
+  const body = { title_id: d.id };
+  if (season != null) body.season = season;
+  if (episode != null) body.episode = episode;
+  if (wholeSeason) { body.whole_season = true; body.episode_count = episodeCount; }
+  const prev = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Saving...";
+  try {
+    await api("/watch/complete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    btn.textContent = "Marked \u2713";
+  } catch (e) {
+    btn.textContent = prev;
+    alert("Could not mark as watched: " + e.message);
+  }
 }
 
 // ---- source picker ----
@@ -612,6 +688,18 @@ function showPickerMessage(handles, msg) {
   list.appendChild(el("div", "muted picker-empty", msg));
 }
 
+// Seconds to resume a title/episode at, from local watch progress. A saved
+// position under 30s (or a completed item) starts from the top.
+async function savedStartSeconds(id, season, episode) {
+  const params = new URLSearchParams();
+  if (season != null) params.set("season", season);
+  if (episode != null) params.set("episode", episode);
+  const qs = params.toString() ? "?" + params.toString() : "";
+  const wp = await api("/watch/progress/" + id + qs).catch(() => null);
+  if (wp && !wp.completed && wp.position_ms > 30000) return wp.position_ms / 1000;
+  return 0;
+}
+
 async function pickSource(d, source, seasonSel, episodeSel) {
   try {
     const resolved = await api("/sources/resolve", {
@@ -622,10 +710,11 @@ async function pickSource(d, source, seasonSel, episodeSel) {
     const season = seasonSel ? Number(seasonSel.value) : null;
     const episode = episodeSel ? Number(episodeSel.value) : null;
     const label = (source.title || d.title || d.name) + (episode ? ` S${season}E${episode}` : "");
+    const start = await savedStartSeconds(d.id, season, episode);
     await api("/play", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: resolved.download_url, file_path: label }),
+      body: JSON.stringify({ url: resolved.download_url, file_path: label, start_seconds: start }),
     });
     navPush("nowplaying", { id: d.id, source, season, episode });
   } catch (e) {
@@ -680,6 +769,7 @@ function fmtTime(sec) {
 
 function renderNowPlaying(d, source, season, episode) {
   stopPlayPoll();
+  nowPlaying = { id: d.id, season, episode };
   app.innerHTML = "";
   const wrap = el("div", "nowplaying");
   wrap.appendChild(el("div", "np-title", d.title || d.name || "Now playing"));
@@ -720,6 +810,7 @@ function renderNowPlaying(d, source, season, episode) {
   });
   quitBtn.addEventListener("click", async () => {
     stopPlayPoll();
+    nowPlaying = null;
     try {
       await api("/play/progress", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title_id: d.id, season, episode }) });
     } catch (e) { /* best-effort save */ }
@@ -727,6 +818,7 @@ function renderNowPlaying(d, source, season, episode) {
     navBack();
   });
 
+  let lastSavedPos = 0;
   playPollTimer = setInterval(async () => {
     try {
       const p = await api("/play/position");
@@ -734,6 +826,12 @@ function renderNowPlaying(d, source, season, episode) {
       cur.textContent = fmtTime(p.time_pos);
       dur.textContent = fmtTime(p.duration);
       if (p.duration) fill.style.width = Math.min(100, (p.time_pos / p.duration) * 100) + "%";
+      // Autosave roughly every 10s so a crash or quit does not lose progress
+      // (Stop also saves; this covers the gap between saves).
+      if (p.time_pos - lastSavedPos >= 10) {
+        lastSavedPos = p.time_pos;
+        api("/play/progress", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title_id: d.id, season, episode }) }).catch(() => {});
+      }
     } catch (e) { /* ignore transient poll errors */ }
   }, 2000);
 }

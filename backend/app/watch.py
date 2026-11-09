@@ -83,3 +83,45 @@ def get_progress(
         return dict(row) if row is not None else None
     finally:
         conn.close()
+
+
+def upsert_complete(
+    db_path: str | Path,
+    title_id: int,
+    season: int | None = None,
+    episode: int | None = None,
+) -> dict:
+    """Mark a title (or episode) as watched, preserving any saved position.
+
+    Backs manual "mark as watched" (a movie, one episode, or every episode
+    in a season). A new row starts at 0/0; an existing row keeps its
+    position_ms/duration_ms and only gains completed/completed_at.
+    """
+    conn = _conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT id FROM watch_progress WHERE title_id = ? "
+            "AND season IS ? AND episode IS ?",
+            (title_id, season, episode),
+        ).fetchone()
+        if row is None:
+            conn.execute(
+                "INSERT INTO watch_progress "
+                "(title_id, season, episode, position_ms, duration_ms, "
+                " completed, completed_at, updated_at) "
+                "VALUES (?, ?, ?, 0, 0, 1, datetime('now'), datetime('now'))",
+                (title_id, season, episode),
+            )
+        else:
+            conn.execute(
+                "UPDATE watch_progress SET completed = 1, "
+                "completed_at = datetime('now'), updated_at = datetime('now') "
+                "WHERE id = ?",
+                (row["id"],),
+            )
+        conn.commit()
+        result = get_progress(db_path, title_id, season=season, episode=episode)
+        assert result is not None
+        return result
+    finally:
+        conn.close()

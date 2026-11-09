@@ -211,7 +211,10 @@ def local_poster_path(db_path: str, tmdb_id: int) -> str | None:
 
 def upsert_title(db_path: str, tmdb_id: int, meta: dict) -> int:
     """Persist durable title metadata. Returns the local titles.id."""
-    type_ = meta.get("type") or meta.get("_type")
+    # _type is our authoritative media type ("movie"/"tv", set by the client);
+    # TMDB's own "type" field is the TV content type ("Scripted", "Animated",
+    # ...) and would fail the CHECK constraint if used.
+    type_ = meta.get("_type") or meta.get("type")
     title = meta.get("title") or meta.get("name")
     year = _year_from_meta(meta)
     conn = get_db(db_path)

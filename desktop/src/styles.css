@@ -167,6 +167,15 @@ main { padding: 8px 28px 48px; }
 .btn:hover { filter: brightness(1.1); }
 .btn:disabled { opacity: 0.6; cursor: default; }
 
+/* a row of secondary actions (e.g. mark-watched next to Play) */
+.btn-row {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+.btn-row .btn { margin-top: 0; }
+
 .muted { color: var(--muted); }
 
 .boot {
@@ -212,6 +221,7 @@ select.focused { outline: 2px solid var(--accent); outline-offset: 2px; }
   padding: 4px 8px;
 }
 .icon:hover { color: var(--text); }
+.icon.syncing { color: var(--accent); animation: pulse 1s ease-in-out infinite; }
 .settings h1 { font-size: 26px; margin: 8px 0 16px; }
 .trakt-panel {
   border: 1px solid #2a2a35;

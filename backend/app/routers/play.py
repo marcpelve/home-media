@@ -22,6 +22,7 @@ router = APIRouter(prefix="/play", tags=["play"])
 class PlayRequest(BaseModel):
     url: str | None = None
     file_path: str | None = None
+    start_seconds: float | None = None
 
 
 class SeekRequest(BaseModel):
@@ -58,6 +59,10 @@ def play(req: PlayRequest, request: Request):
     target = _target(req)
     client.ensure_running()
     client.play(target)
+    # Resume: seek to the saved position. mpv applies the seek after the
+    # loadfile that preceded it, in command order.
+    if req.start_seconds and req.start_seconds > 0:
+        client.set_position(req.start_seconds)
     return {"playing": target, "position": _safe_position(client)}
 
 

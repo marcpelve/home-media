@@ -4,6 +4,7 @@ Run with:
     .venv/Scripts/python -m uvicorn app.main:app --host 127.0.0.1 --port 8790
 """
 
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import load_config
 from app.db import init_db
+from app.sync import sync_all
 from app.tmdb import TmdbClient
 from app.torbox import TorboxClient
 from app.downloads import DownloadManager
@@ -29,6 +31,24 @@ from app.routers.collection import router as collection_router
 # Load config at import; the DB path drives startup init. Secrets here are
 # only read, never logged.
 _config = load_config()
+
+# Best-effort Trakt sync cadence. A sync is one history GET plus only the
+# rows changed since the last push, so this stays far under Trakt's limits.
+TRAKT_SYNC_INTERVAL_S = 1800
+
+
+async def do_trakt_sync(app: FastAPI) -> None:
+    """One best-effort sync; the local DB stays the source of truth on failure."""
+    try:
+        await sync_all(app.state.trakt, app.state.db_path)
+    except Exception:
+        pass
+
+
+async def _trakt_sync_loop(app: FastAPI) -> None:
+    while True:
+        await asyncio.sleep(TRAKT_SYNC_INTERVAL_S)
+        await do_trakt_sync(app)
 
 
 @asynccontextmanager
@@ -59,13 +79,17 @@ async def lifespan(app: FastAPI):
     app.state.trakt = TraktClient(
         client_id=_config.trakt_client_id, db_path=_config.db_path
     )
-    async with (
-        app.state.tmdb_client,
-        app.state.torbox_client,
-        app.state.downloads,
-        app.state.trakt,
-    ):
-        yield
+    sync_task = asyncio.create_task(_trakt_sync_loop(app))
+    try:
+        async with (
+            app.state.tmdb_client,
+            app.state.torbox_client,
+            app.state.downloads,
+            app.state.trakt,
+        ):
+            yield
+    finally:
+        sync_task.cancel()
     app.state.mpv.stop()
 
 

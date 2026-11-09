@@ -135,3 +135,81 @@ def test_upsert_title_and_local_poster(tmp_path):
         assert 789 not in by_id
         # The seeded titles (which have local files) still appear.
         assert 123 in by_id and 456 in by_id
+
+
+def test_watch_progress_specific_episode(tmp_path):
+    db_path, _, _ = _seed(tmp_path)
+    with TestClient(app) as client:
+        app.state.db_path = str(db_path)
+        # exact episode -> that row
+        body = client.get(
+            "/watch/progress/123", params={"season": 1, "episode": 1}
+        ).json()
+        assert body["season"] == 1 and body["episode"] == 1
+        assert body["position_ms"] == 5000
+        # a missing episode -> empty object
+        assert client.get(
+            "/watch/progress/123", params={"season": 1, "episode": 2}
+        ).json() == {}
+        # season without episode -> falls back to current-episode (S01E01)
+        body = client.get("/watch/progress/123", params={"season": 1}).json()
+        assert body["episode"] == 1
+
+
+def test_watch_complete_movie(tmp_path):
+    db_path, _, _ = _seed(tmp_path)
+    with TestClient(app) as client:
+        app.state.db_path = str(db_path)
+        r = client.post("/watch/complete", json={"title_id": 456})
+        assert r.status_code == 200
+        assert r.json()["completed"] == 1
+        conn = sqlite3.connect(db_path)
+        row = conn.execute(
+            "SELECT completed FROM watch_progress "
+            "WHERE title_id = 456 AND season IS NULL AND episode IS NULL"
+        ).fetchone()
+        conn.close()
+        assert row is not None and row[0] == 1
+
+
+def test_watch_complete_episode_preserves_position(tmp_path):
+    db_path, _, _ = _seed(tmp_path)
+    with TestClient(app) as client:
+        app.state.db_path = str(db_path)
+        r = client.post(
+            "/watch/complete", json={"title_id": 123, "season": 1, "episode": 1}
+        )
+        assert r.status_code == 200
+        body = client.get(
+            "/watch/progress/123", params={"season": 1, "episode": 1}
+        ).json()
+        assert body["completed"] is True
+        assert body["position_ms"] == 5000  # saved position preserved
+
+
+def test_watch_complete_whole_season(tmp_path):
+    db_path, _, _ = _seed(tmp_path)
+    with TestClient(app) as client:
+        app.state.db_path = str(db_path)
+        r = client.post(
+            "/watch/complete",
+            json={
+                "title_id": 123,
+                "season": 1,
+                "whole_season": True,
+                "episode_count": 3,
+            },
+        )
+        assert r.status_code == 200
+        assert r.json()["completed"] == 3
+        conn = sqlite3.connect(db_path)
+        rows = conn.execute(
+            "SELECT episode, completed, position_ms FROM watch_progress "
+            "WHERE title_id = 123 AND season = 1 ORDER BY episode"
+        ).fetchall()
+        conn.close()
+        assert [r[0] for r in rows] == [1, 2, 3]
+        assert all(r[1] == 1 for r in rows)
+        # ep 1 kept its saved position; eps 2-3 are fresh 0/0 rows
+        assert rows[0][2] == 5000
+        assert rows[1][2] == 0 and rows[2][2] == 0
