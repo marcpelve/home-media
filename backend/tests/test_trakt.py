@@ -568,7 +568,7 @@ def test_sync_all_records_status(trakt_env):
 
 def test_router_status_not_authenticated(tmp_path: Path):
     db_path = _db(tmp_path)
-    transport = httpx.MockTransport(_make_handler({"scrobbles": []}, [], []))
+    transport = httpx.MockTransport(_make_handler({"scrobles": []}, [], []))
     http_client = httpx.AsyncClient(
         base_url="https://api.trakt.tv", transport=transport
     )
@@ -584,4 +584,61 @@ def test_router_status_not_authenticated(tmp_path: Path):
         assert data["authenticated"] is False
         assert data["username"] is None
         assert data["last_sync"] is None
+    asyncio.run(http_client.aclose())
+
+
+# ---------------------------------------------------------------------------
+# Recommendations
+# ---------------------------------------------------------------------------
+
+def test_recommendations_endpoint_shape(tmp_path: Path):
+    """GET /trakt/recommendations normalizes Trakt recs to {id, title, type}."""
+    db_path = _db(tmp_path)
+    # Real Trakt wraps each rec in a "movie"/"show" key.
+    rec_movie = [{"score": 0.9, "movie": {"ids": {"tmdb": 155}, "title": "Rec Movie"}}]
+    rec_show = [{"score": 0.9, "show": {"ids": {"tmdb": 645}, "title": "Rec Show"}}]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("/recommendations/movie"):
+            return httpx.Response(200, json=rec_movie)
+        if path.endswith("/recommendations/show"):
+            return httpx.Response(200, json=rec_show)
+        return httpx.Response(404, json={})
+
+    transport = httpx.MockTransport(handler)
+    http_client = httpx.AsyncClient(
+        base_url="https://api.trakt.tv", transport=transport
+    )
+    client = TraktClient(client_id=MOCK_ID, db_path=db_path, client=http_client)
+    client.save_tokens(USER, "at1", "rt1", FRESH)
+    app = FastAPI()
+    app.include_router(trakt_router)
+    app.state.trakt = client
+    app.state.db_path = db_path
+    with TestClient(app) as c:
+        r = c.get("/trakt/recommendations")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["movie"] == [{"id": 155, "title": "Rec Movie", "type": "movie"}]
+        assert data["show"] == [{"id": 645, "title": "Rec Show", "type": "tv"}]
+    asyncio.run(http_client.aclose())
+
+
+def test_recommendations_unauthenticated_empty(tmp_path: Path):
+    """Unauthenticated: the endpoint degrades to empty lists, not an error."""
+    db_path = _db(tmp_path)
+    transport = httpx.MockTransport(lambda r: httpx.Response(401, json={}))
+    http_client = httpx.AsyncClient(
+        base_url="https://api.trakt.tv", transport=transport
+    )
+    client = TraktClient(client_id=MOCK_ID, db_path=db_path, client=http_client)
+    app = FastAPI()
+    app.include_router(trakt_router)
+    app.state.trakt = client
+    app.state.db_path = db_path
+    with TestClient(app) as c:
+        r = c.get("/trakt/recommendations")
+        assert r.status_code == 200
+        assert r.json() == {"movie": [], "show": []}
     asyncio.run(http_client.aclose())

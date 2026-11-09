@@ -87,3 +87,28 @@ async def status(request: Request) -> dict:
 async def sync(request: Request) -> dict:
     client = _client(request)
     return await sync_all(client, _db_path(request))
+
+
+@router.get("/recommendations")
+async def recommendations(request: Request) -> dict:
+    """Personalized picks from Trakt, normalized to {id, title, type}.
+
+    The TMDB id (ids.tmdb) is what the rest of the app keys on; items without
+    one are dropped. The frontend resolves posters via the /tmdb/poster proxy.
+    """
+    client = _client(request)
+    data = await client.get_recommendations()
+
+    def _norm(items: list, key: str, type_: str) -> list:
+        out = []
+        for it in items:
+            inner = it.get(key) or {}
+            tmdb_id = (inner.get("ids") or {}).get("tmdb")
+            if tmdb_id:
+                out.append({"id": tmdb_id, "title": inner.get("title"), "type": type_})
+        return out
+
+    return {
+        "movie": _norm(data.get("movie", []), "movie", "movie"),
+        "show": _norm(data.get("show", []), "show", "tv"),
+    }

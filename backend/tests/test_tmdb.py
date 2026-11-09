@@ -67,6 +67,18 @@ def tmdb_app(tmp_path: Path):
         "/movie/55": httpx.Response(200, json=TITLE_DETAILS),
         "/tv/77": httpx.Response(200, json=TV_DETAILS),
         "/movie/55/reviews": httpx.Response(200, json=REVIEWS),
+        "/movie/popular": httpx.Response(
+            200, json={"results": [{"id": 20, "title": "Pop Movie"}]}
+        ),
+        "/tv/popular": httpx.Response(
+            200, json={"results": [{"id": 21, "name": "Pop Show"}]}
+        ),
+        "/discover/movie": httpx.Response(
+            200, json={"results": [{"id": 30, "title": "New Movie"}]}
+        ),
+        "/discover/tv": httpx.Response(
+            200, json={"results": [{"id": 31, "name": "New Show"}]}
+        ),
     }
 
     transport = httpx.MockTransport(_make_handler(calls, payloads))
@@ -235,3 +247,23 @@ def test_reviews_endpoint_shape(tmdb_app):
     data = resp.json()
     assert data["results"] == [REVIEWS["results"][0]]
     assert data["type"] == "movie"
+
+
+def test_popular_endpoint_shape(tmdb_app):
+    """GET /tmdb/popular returns {movie: [...], tv: [...]}."""
+    tc: TestClient = tmdb_app["client"]
+    resp = tc.get("/tmdb/popular")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["movie"] == [{"id": 20, "title": "Pop Movie"}]
+    assert data["tv"] == [{"id": 21, "name": "Pop Show"}]
+
+
+def test_latest_endpoint_shape(tmdb_app):
+    """GET /tmdb/latest returns {movie: [...], tv: [...]} via /discover."""
+    tc: TestClient = tmdb_app["client"]
+    resp = tc.get("/tmdb/latest")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["movie"] == [{"id": 30, "title": "New Movie"}]
+    assert data["tv"] == [{"id": 31, "name": "New Show"}]

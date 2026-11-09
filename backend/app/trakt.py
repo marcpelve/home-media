@@ -402,6 +402,30 @@ class TraktClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def get_recommendations(self) -> dict:
+        """Recommendations from watch history (movies + shows).
+
+        Trakt's /recommendations/* items are keyed by "movie" or "show" with
+        the TMDB id under ids.tmdb. Any failure (not authed, network, 404)
+        yields an empty list so the home row simply omits itself.
+        """
+        import asyncio as _aio
+
+        async def _rec(path: str) -> list:
+            try:
+                resp = await self._authed_get(path)
+                resp.raise_for_status()
+                data = resp.json()
+                return data if isinstance(data, list) else []
+            except Exception:
+                return []
+
+        movie, show = await _aio.gather(
+            _rec("/recommendations/movie"),
+            _rec("/recommendations/show"),
+        )
+        return {"movie": movie, "show": show}
+
     async def get_username(self) -> str | None:
         """Fetch the authenticated username from /users/me (None on failure)."""
         try:

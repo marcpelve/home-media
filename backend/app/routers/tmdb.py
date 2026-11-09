@@ -31,6 +31,18 @@ async def home(request: Request):
     return await client.home()
 
 
+@router.get("/popular")
+async def popular(request: Request):
+    client = get_tmdb_client(request)
+    return await client.popular()
+
+
+@router.get("/latest")
+async def latest(request: Request):
+    client = get_tmdb_client(request)
+    return await client.latest()
+
+
 @router.get("/categories")
 async def categories(request: Request):
     client = get_tmdb_client(request)

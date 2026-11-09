@@ -59,7 +59,7 @@ function renderView(view, params) {
     renderNowPlaying(cacheGet("detail:" + params.id) || {}, params.source, params.season, params.episode);
     return;
   }
-  return renderHome();
+  return renderHome(params && params.category);
 }
 
 function navPush(view, params) {
@@ -133,29 +133,110 @@ function makeRow(title, items, opts) {
   return row;
 }
 
-async function renderHome() {
-  stopPlayPoll();
-  app.innerHTML = "";
-  const [watch, home] = await Promise.allSettled([
-    api("/watch"),
-    api("/tmdb/home"),
-  ]);
+function normTmdb(it, type) {
+  return { id: it.id, title: it.title || it.name, type, poster_path: it.poster_path };
+}
+
+function normRec(it, type) {
+  return {
+    id: it.id,
+    title: it.title || "",
+    type,
+    poster: it.id ? `/tmdb/poster/${it.id}?size=w342` : null,
+  };
+}
+
+function filterByCat(items, cat) {
+  return cat === "all" ? items : items.filter((it) => it.type === cat);
+}
+
+function tmdbItems(movie, tv) {
+  return [
+    ...(movie || []).map((it) => normTmdb(it, "movie")),
+    ...(tv || []).map((it) => normTmdb(it, "tv")),
+  ].filter((it) => it.poster_path);
+}
+
+function buildHomeRows(watch, popular, trending, latest, recs) {
+  const rows = [];
   if (watch.status === "fulfilled") {
-    const row = makeRow("Continue Watching", watch.value.items, { withProgress: true });
-    if (row) app.appendChild(row);
+    const items = (watch.value.items || []).map((it) => ({
+      id: it.title_id,
+      title: it.title,
+      type: it.type,
+      poster: it.poster,
+      position_ms: it.position_ms,
+      duration_ms: it.duration_ms,
+      season: it.season,
+      episode: it.episode,
+    }));
+    rows.push(["Continue Watching", items, { withProgress: true }]);
   }
-  if (home.status === "fulfilled") {
-    const row = makeRow("Trending This Week", home.value.results || []);
-    if (row) app.appendChild(row);
+  if (popular.status === "fulfilled") {
+    rows.push(["Popular", tmdbItems(popular.value.movie, popular.value.tv)]);
   }
-  if (watch.status === "rejected" && home.status === "rejected") {
+  if (trending.status === "fulfilled") {
+    rows.push(["Trending This Week", (trending.value.results || []).map((it) => normTmdb(it, it.media_type)).filter((it) => it.poster_path)]);
+  }
+  if (latest.status === "fulfilled") {
+    rows.push(["Latest Releases", tmdbItems(latest.value.movie, latest.value.tv)]);
+  }
+  if (recs.status === "fulfilled") {
+    rows.push(["Because You Watched", [
+      ...(recs.value.movie || []).map((it) => normRec(it, "movie")),
+      ...(recs.value.show || []).map((it) => normRec(it, "tv")),
+    ]]);
+  }
+  return rows;
+}
+
+function renderHomeRows(rows, category, allRejected) {
+  app.innerHTML = "";
+  const tabs = el("div", "cat-tabs");
+  for (const [val, label] of [["all", "All"], ["movie", "Movies"], ["tv", "TV"]]) {
+    const t = el("button", "cat-tab" + (val === category ? " active" : ""), label);
+    t.addEventListener("click", () => {
+      history.replaceState({ view: "home", params: { category: val }, scroll: 0 }, "", "");
+      renderHomeRows(rows, val, allRejected);
+    });
+    tabs.appendChild(t);
+  }
+  app.appendChild(tabs);
+
+  let rendered = 0;
+  for (const [title, items, opts] of rows) {
+    const row = makeRow(title, filterByCat(items, category), opts);
+    if (row) { app.appendChild(row); rendered++; }
+  }
+  if (!rendered) {
     const box = el("div", "boot");
-    box.appendChild(el("p", "muted", "Backend unreachable."));
-    const btn = el("button", "btn", "Retry");
-    btn.addEventListener("click", () => renderHome());
-    box.appendChild(btn);
+    if (allRejected) {
+      box.appendChild(el("p", "muted", "Backend unreachable."));
+      const btn = el("button", "btn", "Retry");
+      btn.addEventListener("click", () => renderHome(category));
+      box.appendChild(btn);
+    } else {
+      box.appendChild(el("p", "muted", "Nothing to show here yet."));
+    }
     app.appendChild(box);
   }
+  window.scrollTo(0, 0);
+}
+
+async function renderHome(category) {
+  stopPlayPoll();
+  category = category || "all";
+  app.innerHTML = "";
+  const [watch, popular, trending, latest, recs] = await Promise.allSettled([
+    api("/watch"),
+    api("/tmdb/popular"),
+    api("/tmdb/home"),
+    api("/tmdb/latest"),
+    api("/trakt/recommendations"),
+  ]);
+  const rows = buildHomeRows(watch, popular, trending, latest, recs);
+  const allRejected = [watch, popular, trending, latest, recs].every((r) => r.status === "rejected");
+  renderHomeRows(rows, category, allRejected);
 }
 
 // ---- offline library (works with no internet) ----

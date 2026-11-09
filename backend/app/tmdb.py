@@ -144,6 +144,30 @@ class TmdbClient:
         data = await self._fetch("trending/all/week", TTL_HOME)
         return data
 
+    async def popular(self) -> dict:
+        """Popular movies + TV."""
+        import asyncio as _aio
+
+        movie, tv = await _aio.gather(
+            self._fetch("movie/popular", TTL_HOME),
+            self._fetch("tv/popular", TTL_HOME),
+        )
+        return {"movie": movie.get("results", []), "tv": tv.get("results", [])}
+
+    async def latest(self) -> dict:
+        """Latest releases: most recently released movies + first-aired shows.
+
+        /discover sorted by release date - the /movie/latest endpoints return a
+        single object, not a list, so they can't fill a row.
+        """
+        import asyncio as _aio
+
+        movie, tv = await _aio.gather(
+            self._fetch("discover/movie", TTL_HOME, {"sort_by": "primary_release_date.desc"}),
+            self._fetch("discover/tv", TTL_HOME, {"sort_by": "first_air_date.desc"}),
+        )
+        return {"movie": movie.get("results", []), "tv": tv.get("results", [])}
+
     async def genres(self) -> dict:
         """Genre lists for movie + tv."""
         import asyncio as _aio
