@@ -48,7 +48,7 @@ async def get_sources(tmdb_id: int, query: SourceQuery, request: Request):
     except Exception:
         raise HTTPException(status_code=404, detail="Title not found")
 
-    imdb = (details.get("external_ids") or {}).get("imdb_id", "")
+    imdb = details.get("imdb_id") or (details.get("external_ids") or {}).get("imdb_id", "")
     if not imdb:
         raise HTTPException(status_code=400, detail="No IMDb ID for this title")
 
