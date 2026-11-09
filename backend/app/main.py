@@ -7,6 +7,7 @@ Run with:
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import load_config
 from app.db import init_db
@@ -21,6 +22,7 @@ from app.routers.torbox import router as torbox_router
 from app.routers.downloads import router as downloads_router
 from app.routers.play import router as play_router
 from app.routers.trakt import router as trakt_router
+from app.routers.library import router as library_router
 
 # Load config at import; the DB path drives startup init. Secrets here are
 # only read, never logged.
@@ -65,12 +67,21 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="home-media", lifespan=lifespan)
+# The desktop webview loads from a local origin and fetches this API
+# cross-origin, so allow it. The server is bound to 127.0.0.1 only.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.include_router(tmdb_router)
 app.include_router(sources_router)
 app.include_router(torbox_router)
 app.include_router(downloads_router)
 app.include_router(play_router)
 app.include_router(trakt_router)
+app.include_router(library_router)
 
 
 @app.get("/health")
