@@ -32,6 +32,32 @@ function posterSrc(item) {
   return "";
 }
 
+// Lazy poster loading: a full home page has ~90 cards, and setting every
+// img.src at once fires ~90 concurrent downloads (heavy on the CDN and slow).
+// Native loading="lazy" only defers images below the vertical fold, not cards
+// off to the side in a horizontally-scrolled row. An IntersectionObserver with
+// a rootMargin loads a poster only when its card is (near) visible in the
+// viewport, in both axes. The observer is created once and reused.
+const POSTER_PLACEHOLDER = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
+let posterObserver = null;
+function observePoster(img) {
+  if (!posterObserver) {
+    posterObserver = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) {
+            const el = e.target;
+            el.src = el.dataset.posterSrc;
+            posterObserver.unobserve(el);
+          }
+        }
+      },
+      { rootMargin: "200px 0px 200px 0px" }
+    );
+  }
+  posterObserver.observe(img);
+}
+
 function stopPlayPoll() {
   if (playPollTimer) { clearInterval(playPollTimer); playPollTimer = null; }
 }
@@ -105,8 +131,13 @@ function makeCard(item, { withProgress = false } = {}) {
   const card = el("div", "card");
   const img = el("img", "poster");
   img.loading = "lazy";
-  img.src = posterSrc(item);
   img.alt = item.title || item.name || "";
+  const src = posterSrc(item);
+  if (src) {
+    img.src = POSTER_PLACEHOLDER; // fill in when (near) visible
+    img.dataset.posterSrc = src;
+    observePoster(img);
+  }
   card.appendChild(img);
 
   const meta = el("div", "meta");
