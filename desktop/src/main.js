@@ -67,6 +67,64 @@ function stopPlayPoll() {
   if (playPollTimer) { clearInterval(playPollTimer); playPollTimer = null; }
 }
 
+// ---- background source prefetch ----
+// Fire the source scrape as soon as the user settles on a detail card
+// (debounced), so Play can show a populated list - or a near-instant one if
+// it's still in flight. One scrape runs at a time; leaving the card or
+// opening another aborts the current one. Resolved payloads live in a small
+// in-memory cache (never persisted: sources go stale quickly).
+const sourceInFlight = new Map(); // key -> { promise, controller }
+const sourceCache = new Map();    // key -> { sources, count }
+let sourcePrefetchTimer = null;
+
+function srcKey(d, season, episode) {
+  return d._type === "tv"
+    ? "src:" + d.id + ":" + season + ":" + episode
+    : "src:" + d.id;
+}
+
+function rememberSources(key, payload) {
+  if (sourceCache.size >= 24) sourceCache.delete(sourceCache.keys().next().value);
+  sourceCache.set(key, payload);
+}
+
+function prefetchSources(d, season, episode) {
+  const key = srcKey(d, season, episode);
+  if (sourceCache.has(key) || sourceInFlight.has(key)) return;
+  const controller = new AbortController();
+  const body = d._type === "tv" ? { season, episode } : {};
+  const p = api("/sources/" + d.id, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal: controller.signal,
+  });
+  sourceInFlight.set(key, { promise: p, controller });
+  p.then((payload) => {
+    sourceInFlight.delete(key);
+    rememberSources(key, payload);
+  }).catch(() => {
+    sourceInFlight.delete(key);
+  });
+}
+
+// Abort any in-flight prefetch whose key is not keepKey (single-flight).
+function abortStalePrefetch(keepKey) {
+  for (const [key, entry] of sourceInFlight) {
+    if (key !== keepKey) { entry.controller.abort(); sourceInFlight.delete(key); }
+  }
+}
+
+// Debounced prefetch for the card's current selection. Called on open and on
+// any season/episode change.
+function schedulePrefetch(d, seasonSel, episodeSel) {
+  const season = seasonSel ? Number(seasonSel.value) : null;
+  const episode = episodeSel ? Number(episodeSel.value) : null;
+  abortStalePrefetch(srcKey(d, season, episode));
+  if (sourcePrefetchTimer) clearTimeout(sourcePrefetchTimer);
+  sourcePrefetchTimer = setTimeout(() => prefetchSources(d, season, episode), 400);
+}
+
 // ---- navigation / history (lightweight SPA back-stack) ----
 // Back returns to the previous screen (and where you were in it), not always
 // home. The stack is the browser's native pushState/popstate (cheap, and it
@@ -81,6 +139,8 @@ function cacheSet(key, val) {
 }
 
 function renderView(view, params) {
+  if (sourcePrefetchTimer) { clearTimeout(sourcePrefetchTimer); sourcePrefetchTimer = null; }
+  if (view !== "detail") abortStalePrefetch(null);
   if (view === "search") return renderSearch(params.query, params.category || "all");
   if (view === "detail") return openDetail(params.id);
   if (view === "settings") return renderSettings();
@@ -389,13 +449,20 @@ async function openDetail(id) {
     const key = "detail:" + id;
     let d = cacheGet(key);
     if (!d) { d = await api(`/tmdb/title/${id}`); cacheSet(key, d); }
-    renderDetail(d);
+    let currentEp = null;
+    if (d._type === "tv") {
+      // Cheap localhost read of local watch progress; defaults the picker and
+      // the background prefetch to the episode the user is on.
+      const wp = await api("/watch/progress/" + id).catch(() => null);
+      if (wp && wp.episode != null) currentEp = { season: wp.season, episode: wp.episode };
+    }
+    renderDetail(d, currentEp);
   } catch (e) {
     app.appendChild(el("p", "muted", "Could not load details: " + e.message));
   }
 }
 
-function renderDetail(d) {
+function renderDetail(d, currentEp) {
   stopPlayPoll();
   app.innerHTML = "";
   const wrap = el("div", "detail");
@@ -433,10 +500,22 @@ function renderDetail(d) {
     };
     const firstSeason = d.seasons.find((s) => s.season_number !== 0);
     if (firstSeason) fillEps(firstSeason.episode_count || 1);
+    // Default to the episode the user is on (local watch progress), when it
+    // maps to a season this title lists; otherwise keep S1E1.
+    if (currentEp) {
+      const cs = d.seasons.find((x) => x.season_number === currentEp.season);
+      if (cs) {
+        seasonSel.value = String(currentEp.season);
+        fillEps(cs.episode_count || 1);
+        if (currentEp.episode <= (cs.episode_count || 1)) episodeSel.value = String(currentEp.episode);
+      }
+    }
     seasonSel.addEventListener("change", () => {
       const s = d.seasons.find((x) => x.season_number === Number(seasonSel.value));
       fillEps(s ? s.episode_count || 1 : 1);
+      schedulePrefetch(d, seasonSel, episodeSel);
     });
+    episodeSel.addEventListener("change", () => schedulePrefetch(d, seasonSel, episodeSel));
     picker.appendChild(seasonSel);
     picker.appendChild(episodeSel);
     info.appendChild(picker);
@@ -449,6 +528,9 @@ function renderDetail(d) {
   wrap.appendChild(info);
   app.appendChild(wrap);
   window.scrollTo(0, 0);
+  // Kick off the background source prefetch once the user has settled on the
+  // card (debounced), so Play can show a populated or near-instant list.
+  schedulePrefetch(d, seasonSel, episodeSel);
 }
 
 // ---- source picker ----
@@ -556,15 +638,28 @@ async function startPlayback(d, btn, seasonSel, episodeSel) {
   // Open the modal up front so the user sees it working; the list fills in
   // once sources come back.
   const handles = openSourcePickerLoading(d, btn, seasonSel, episodeSel);
+  const season = seasonSel ? Number(seasonSel.value) : null;
+  const episode = episodeSel ? Number(episodeSel.value) : null;
+  const key = srcKey(d, season, episode);
   try {
-    const body = d._type === "tv"
-      ? { season: seasonSel ? Number(seasonSel.value) : 1, episode: episodeSel ? Number(episodeSel.value) : 1 }
-      : {};
-    const srcs = await api(`/sources/${d.id}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    // Reuse a background prefetch if one is cached or in flight; only fall
+    // back to a fresh fetch when Play was clicked before it had started.
+    let srcs = sourceCache.get(key) || null;
+    if (!srcs) {
+      const inflight = sourceInFlight.get(key);
+      if (inflight) {
+        srcs = await inflight.promise;
+      } else {
+        const body = d._type === "tv"
+          ? { season: season || 1, episode: episode || 1 }
+          : {};
+        srcs = await api(`/sources/${d.id}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      }
+    }
     if (!srcs.sources || !srcs.sources.length) {
       showPickerMessage(handles, "No sources found for this title.");
     } else {

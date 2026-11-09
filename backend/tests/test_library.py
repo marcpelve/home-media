@@ -93,6 +93,27 @@ def test_library_file_resolves_path(tmp_path):
         assert r.status_code == 404
 
 
+def test_watch_progress_current_episode(tmp_path):
+    db_path, _, _ = _seed(tmp_path)
+    with TestClient(app) as client:
+        app.state.db_path = str(db_path)
+
+        # TV show with a progress row -> returns the current episode.
+        r = client.get("/watch/progress/123")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["season"] == 1
+        assert body["episode"] == 1
+        assert body["position_ms"] == 5000
+        assert body["completed"] is False
+
+        # Movie has no episode progress -> empty object.
+        assert client.get("/watch/progress/456").json() == {}
+
+        # Unknown title -> empty object.
+        assert client.get("/watch/progress/999").json() == {}
+
+
 def test_upsert_title_and_local_poster(tmp_path):
     db_path, _, _ = _seed(tmp_path)
     data = {

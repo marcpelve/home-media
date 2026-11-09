@@ -53,3 +53,30 @@ async def watch_list(request: Request):
             "updated_at": r["updated_at"],
         })
     return {"items": items}
+
+
+@router.get("/progress/{tmdb_id}")
+async def watch_progress(request: Request, tmdb_id: int):
+    """Current episode for a title: the most recently updated progress row
+    that has an episode number (TV). Returns an empty object when there is
+    none, so the caller falls back to its own default (e.g. S01E01)."""
+    conn = sqlite3.connect(request.app.state.db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            "SELECT season, episode, position_ms, duration_ms, completed "
+            "FROM watch_progress WHERE title_id = ? AND episode IS NOT NULL "
+            "ORDER BY updated_at DESC LIMIT 1",
+            (tmdb_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return {}
+    return {
+        "season": row["season"],
+        "episode": row["episode"],
+        "position_ms": row["position_ms"],
+        "duration_ms": row["duration_ms"],
+        "completed": bool(row["completed"]),
+    }
