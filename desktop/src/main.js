@@ -452,6 +452,12 @@ function renderDetail(d) {
 }
 
 // ---- source picker ----
+// Map a capability tag to a CSS class slug for color coding (e.g. "Dolby
+// Vision" -> "cap-dolby-vision", "H.264" -> "cap-h-264").
+function tagSlug(t) {
+  return "cap-" + t.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
 // Open the source modal immediately (with a loading state) so the user sees
 // it working; the list is populated by fillSourceList once sources return.
 function openSourcePickerLoading(d, btn, seasonSel, episodeSel) {
@@ -497,8 +503,12 @@ function fillSourceList(handles, d, sources, seasonSel, episodeSel) {
   for (const s of sources) {
     const row = el("div", "src-row");
     const top = el("div", "src-row-top");
-    top.appendChild(el("span", "badge " + (s.quality === "4K" ? "q4k" : "qhd"), s.quality || "?"));
-    for (const t of (s.tags || [])) top.appendChild(el("span", "badge cap", t));
+    // Tags live in a flex:1 wrapper so they take all the width, pinning the
+    // Cached badge (a sibling) to the right edge of the row.
+    const tags = el("div", "src-tags");
+    tags.appendChild(el("span", "badge " + (s.quality === "4K" ? "q4k" : "qhd"), s.quality || "?"));
+    for (const t of (s.tags || [])) tags.appendChild(el("span", "badge cap " + tagSlug(t), t));
+    top.appendChild(tags);
     if (s.cached) top.appendChild(el("span", "badge cached", "Cached"));
     row.appendChild(top);
     const meta = el("span", "src-meta");
