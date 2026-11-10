@@ -1171,10 +1171,17 @@ function buildFocusMap() {
     if (!byRow.has(rowEl)) byRow.set(rowEl, []);
     byRow.get(rowEl).push(e);
   }
-  focusRows = rows.concat([...byRow.values()]);
+  // Top controls (search bar + category tabs) lead the map so Up from the top
+  // card row reaches them, then Down enters the grid.
+  const top = [];
+  const search = document.getElementById("search");
+  if (search) top.push([search]);
+  const tabs = [...app.querySelectorAll(".cat-tab")];
+  if (tabs.length) top.push(tabs);
+  focusRows = top.concat(rows).concat([...byRow.values()]);
   focusRow = 0;
   focusCol = 0;
-  setFocus(0, 0);
+  setFocus(top.length, 0); // default focus: first card row, not the search bar
 }
 
 function setFocus(row, col) {
@@ -1184,7 +1191,11 @@ function setFocus(row, col) {
   focusCol = Math.max(0, Math.min(col, r.length - 1));
   document.querySelectorAll(".focused").forEach((n) => n.classList.remove("focused"));
   const el = r[focusCol];
-  if (el) { el.classList.add("focused"); el.scrollIntoView({ block: "nearest", inline: "nearest" }); }
+  if (el) {
+    el.classList.add("focused");
+    if (el.tagName === "INPUT") el.focus(); // real focus so the search bar accepts typing
+    el.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
   return el;
 }
 
