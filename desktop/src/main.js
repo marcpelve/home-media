@@ -653,7 +653,9 @@ function renderDetail(d, currentEp) {
       else if (e.key === "ArrowDown") next = Math.min(i + cols, cards.length - 1);
       else next = Math.max(i - cols, 0);
       cards[next].focus();
-    });
+      // Keep the focused card in view so you can't select an episode off-screen.
+      cards[next].scrollIntoView({ block: "nearest" });
+      });
 
     // Fetch a season's episodes and render them as cards (still, title,
     // synopsis). Stills are proxied + disk-cached like posters (offline-safe).
@@ -1320,7 +1322,48 @@ document.addEventListener("keydown", (e) => {
     case "ArrowDown":  e.preventDefault(); setFocus(focusRow + 1, focusCol); break;
     case "Enter":
     case " ":          e.preventDefault(); activate(); break;
-    case "Escape":     e.preventDefault(); goBack(); break;
+    case "Backspace": {
+      // Back acts as "back" (close an overlay, else navigate back) - but never
+      // while typing in a field, where it should delete a character.
+      const t = document.activeElement;
+      const typing = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
+      if (!typing) { e.preventDefault(); goBack(); }
+      break;
+    }
+    case "Escape": {
+      // Escape closes open menus (season dropdown, source picker) rather than
+      // navigating back - that's now Backspace's job.
+      e.preventDefault();
+      const openList = document.querySelector(".season-list.open");
+      if (openList) {
+        openList.classList.remove("open");
+        const a = openList.querySelector(".season-item.active");
+        if (a) a.classList.remove("active");
+      } else {
+        const overlay = document.querySelector(".overlay");
+        if (overlay) {
+          overlay.remove();
+          const b = document.querySelector(".detail .btn");
+          if (b) { b.disabled = false; b.textContent = "Play"; }
+          buildFocusMap();
+        }
+      }
+      break;
+    }
+  }
+});
+
+// Clicking outside an open season dropdown closes it (dismiss the menu without
+// re-clicking the season button).
+document.addEventListener("click", (e) => {
+  const openList = document.querySelector(".season-list.open");
+  if (openList) {
+    const picker = openList.closest(".ep-picker");
+    if (picker && !picker.contains(e.target)) {
+      openList.classList.remove("open");
+      const a = openList.querySelector(".season-item.active");
+      if (a) a.classList.remove("active");
+    }
   }
 });
 
