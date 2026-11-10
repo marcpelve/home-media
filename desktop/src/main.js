@@ -622,6 +622,11 @@ function renderDetail(d, currentEp) {
     // accumulate across season changes: arrows move between cards, Enter/Space
     // plays the focused card.
     grid.addEventListener("keydown", (e) => {
+      // Stop the global document keydown handler from also running its own
+      // grid-nav on the same key (that double-handling was the dual-focus bug).
+      if (["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp", "Enter", " ", "Spacebar"].includes(e.key)) {
+        e.stopPropagation();
+      }
       if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
         const card = e.target.closest(".ep-card");
         if (!card) return;
@@ -639,6 +644,8 @@ function renderDetail(d, currentEp) {
       // row. The column count comes from the live grid so it tracks the
       // responsive breakpoints (4/3/2/1).
       const cols = (getComputedStyle(grid).gridTemplateColumns || "").split(" ").filter(Boolean).length || 1;
+      // Up from the top row escapes to the season selector above the grid.
+      if (e.key === "ArrowUp" && i < cols) { seasonBtn.focus(); return; }
       let next;
       if (e.key === "ArrowRight") next = Math.min(i + 1, cards.length - 1);
       else if (e.key === "ArrowLeft") next = Math.max(i - 1, 0);
@@ -710,11 +717,20 @@ function renderDetail(d, currentEp) {
       renderEpisodes(n);
     };
     seasonBtn.addEventListener("keydown", (e) => {
+      if (["Enter", " ", "Spacebar", "Escape", "ArrowDown", "ArrowUp"].includes(e.key)) e.stopPropagation();
       if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
         e.preventDefault();
         openSeasons();
       } else if (e.key === "Escape") {
         closeSeasons();
+      } else if (e.key === "ArrowDown" && !seasonList.classList.contains("open")) {
+        // Down from the season selector enters the episode grid.
+        e.preventDefault();
+        const cards = [...grid.querySelectorAll(".ep-card")];
+        if (cards.length) cards[0].focus();
+      } else if (e.key === "ArrowUp") {
+        // The season selector is the top of the view; Up does nothing.
+        e.preventDefault();
       }
     });
     seasonBtn.addEventListener("click", () => {
@@ -722,6 +738,7 @@ function renderDetail(d, currentEp) {
       else openSeasons();
     });
     seasonList.addEventListener("keydown", (e) => {
+      if (["ArrowDown", "ArrowUp", "Enter", " ", "Spacebar", "Escape"].includes(e.key)) e.stopPropagation();
       const active = seasonList.querySelector(".season-item.active");
       let idx = seasonItems.indexOf(active);
       if (e.key === "ArrowDown") { e.preventDefault(); idx = Math.min(idx + 1, seasonItems.length - 1); }
