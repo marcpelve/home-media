@@ -22,6 +22,28 @@ function el(tag, cls, text) {
   return n;
 }
 
+// Netflix/Prime-style hover backdrop: a large 16:9 image that fades in at the
+// top of the screen (behind the content) when you hover a card. Fixed + on
+// <body> so it survives re-renders (app.innerHTML = "").
+const backdrop = el("div", "backdrop");
+const backdropImg = el("img");
+backdropImg.alt = "";
+backdrop.appendChild(backdropImg);
+document.body.appendChild(backdrop);
+let backdropHideTimer = null;
+function showBackdrop(item) {
+  if (!item || !item.id) return;
+  if (backdropHideTimer) { clearTimeout(backdropHideTimer); backdropHideTimer = null; }
+  const t = item.type ? "?type=" + item.type : "";
+  backdropImg.src = API + "/tmdb/backdrop/" + item.id + t + "&size=w1280";
+  backdrop.classList.add("show");
+}
+function hideBackdrop() {
+  // Delay so sliding the pointer across adjacent cards doesn't flicker it off.
+  if (backdropHideTimer) clearTimeout(backdropHideTimer);
+  backdropHideTimer = setTimeout(() => { backdrop.classList.remove("show"); backdropHideTimer = null; }, 250);
+}
+
 function esc(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => (
     { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
@@ -289,6 +311,9 @@ function makeCard(item, { withProgress = false } = {}) {
       navPush("detail", { id: item.id, type: item.type });
     }
   });
+  // Netflix/Prime-style: hovering a card fades in its backdrop at the top.
+  card.addEventListener("mouseenter", () => showBackdrop(item));
+  card.addEventListener("mouseleave", hideBackdrop);
   return card;
 }
 

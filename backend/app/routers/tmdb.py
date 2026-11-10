@@ -113,6 +113,29 @@ async def poster(request: Request, tmdb_id: int, size: str = Query("w342"), medi
     return FileResponse(str(dest))
 
 
+@router.get("/backdrop/{tmdb_id}")
+async def backdrop(request: Request, tmdb_id: int, size: str = Query("w1280"), media_type: str = Query(None, alias="type")):
+    """Serve the cached backdrop for a title; downloads + caches on miss."""
+    client = get_tmdb_client(request)
+    try:
+        # TMDB shares numeric ids across media types; use the caller's type when
+        # provided, else the movie-then-tv probe.
+        if media_type in ("movie", "tv"):
+            details = await client.title_typed(tmdb_id, media_type)
+        else:
+            details = await client.title(tmdb_id)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Title not found")
+    backdrop_path = details.get("backdrop_path")
+    if not backdrop_path:
+        raise HTTPException(status_code=404, detail="No backdrop available")
+    key = f"{tmdb_id}-bd-{media_type}" if media_type in ("movie", "tv") else f"{tmdb_id}-bd"
+    dest = await client.get_image(backdrop_path, key, size)
+    if dest is None:
+        raise HTTPException(status_code=404, detail="Backdrop unavailable")
+    return FileResponse(str(dest))
+
+
 @router.get("/season/{tmdb_id}/{season}")
 async def season(request: Request, tmdb_id: int, season: int):
     """Episodes for a season (still, name, synopsis per episode)."""
