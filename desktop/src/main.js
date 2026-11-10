@@ -1144,6 +1144,11 @@ function focusables() {
 }
 
 function buildFocusMap() {
+  // Preserve the currently focused element across rebuilds. The MutationObserver
+  // fires on every DOM change (lazy image loads, progress bars, the Continue
+  // Watching row updating) - each of those used to yank focus back to the first
+  // card mid-navigation, so Up "went nowhere".
+  const prev = currentFocus();
   const els = focusables();
   const rows = [];
   const inGrid = new Set();
@@ -1179,9 +1184,18 @@ function buildFocusMap() {
   // Drop empty rows so Up from the first populated row reaches the tabs (an
   // empty "Continue Watching" row used to swallow the keypress).
   focusRows = top.concat(rows).concat([...byRow.values()]).filter((r) => r.length > 0);
+  // Restore focus to the previous element if it's still in the map; else default.
+  let restore = null;
+  if (prev) {
+    for (let r = 0; r < focusRows.length; r++) {
+      const c = focusRows[r].indexOf(prev);
+      if (c !== -1) { restore = [r, c]; break; }
+    }
+  }
   focusRow = 0;
   focusCol = 0;
-  setFocus(top.length, 0); // default focus: first card row
+  if (restore) setFocus(restore[0], restore[1]);
+  else setFocus(top.length, 0); // default focus: first card row
 }
 
 function setFocus(row, col) {
