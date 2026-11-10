@@ -602,6 +602,16 @@ select.focused { outline: 2px solid #fff; outline-offset: 2px; }
   background: #e0a13a;
   cursor: help;
   box-shadow: 0 0 0 2px rgba(224, 161, 58, 0.22);
+  animation: svc-blink 2.4s ease-in-out infinite;
+}
+/* Steady while hovered so the tooltip reads cleanly (no mid-read blink). */
+.svc-dot:hover { animation: none; }
+@keyframes svc-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.28; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .svc-dot { animation: none; }
 }
 .svc-tip {
   display: none;
