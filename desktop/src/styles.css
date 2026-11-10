@@ -155,7 +155,42 @@ main { padding: 8px 28px 48px; }
 .ep-row .btn { margin-top: 0; padding: 8px 18px; font-size: 13px; }
 
 /* TV season: episode card grid (Amazon-Prime style) */
-.ep-picker { margin: 18px 0 14px; }
+.ep-picker { margin: 18px 0 14px; position: relative; display: inline-block; }
+.season-btn {
+  background: var(--panel);
+  color: #eee;
+  border: 1px solid #2a2a35;
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.season-btn:hover { border-color: #3a3a48; }
+.season-btn:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+.season-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 100%;
+  background: var(--panel);
+  border: 1px solid #2a2a35;
+  border-radius: 8px;
+  padding: 4px;
+  display: none;
+  z-index: 30;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+.season-list.open { display: block; }
+.season-list:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+.season-item {
+  padding: 7px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.season-item:hover, .season-item.active { background: #2a2a38; }
 .ep-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -173,6 +208,7 @@ main { padding: 8px 28px 48px; }
   transition: transform 0.15s ease;
 }
 .ep-card:hover { transform: translateY(-2px); border-color: #3a3a48; }
+.ep-card:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
 .ep-card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .ep-card .ep-still {
   width: 100%;
@@ -183,9 +219,9 @@ main { padding: 8px 28px 48px; }
 }
 .ep-card.no-still .ep-still { display: none; }
 .ep-card .ep-body { padding: 10px 12px 12px; }
-.ep-card .ep-name { font-size: 13px; font-weight: 600; margin-bottom: 5px; }
+.ep-card .ep-name { font-size: 15px; font-weight: 600; margin-bottom: 5px; }
 .ep-card .ep-overview {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--muted);
   line-height: 1.45;
   display: -webkit-box;

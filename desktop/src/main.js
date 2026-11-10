@@ -513,19 +513,33 @@ function renderDetail(d, currentEp) {
 
   let seasonSel = null, episodeSel = null, selectedEp = 1, curSeason = 1, curEp = 1;
   if (d._type === "tv" && Array.isArray(d.seasons) && d.seasons.length) {
-    // Proxy so the downstream play/prefetch/mark-watched code that reads
-    // episodeSel.value keeps working; the episode grid is the real selector.
+    // Proxies so the downstream play/prefetch/mark-watched code that reads
+    // *.value keeps working; the episode grid and the season dropdown are the
+    // real selectors (they mutate selectedEp / curSeason).
     episodeSel = { get value() { return String(selectedEp); } };
+    seasonSel = { get value() { return String(curSeason); } };
     const picker = el("div", "ep-picker");
-    seasonSel = el("select");
+    // Custom season dropdown. A native <select> traps the arrow keys (focusing
+    // it and pressing up/down changes the season, so you can never reach the
+    // episodes). This is a button you "enter" with Enter/Space; only while the
+    // list is open do the arrows do anything.
+    const seasonBtn = el("button", "season-btn", `Season ${curSeason}`);
+    seasonBtn.setAttribute("aria-haspopup", "listbox");
+    seasonBtn.setAttribute("aria-expanded", "false");
+    const seasonList = el("div", "season-list");
+    seasonList.setAttribute("role", "listbox");
+    seasonList.tabIndex = -1;
+    const seasonItems = [];
     for (const s of d.seasons) {
       if (s.season_number === 0) continue;
-      const opt = document.createElement("option");
-      opt.value = s.season_number;
-      opt.textContent = `Season ${s.season_number}`;
-      seasonSel.appendChild(opt);
+      const item = el("div", "season-item", `Season ${s.season_number}`);
+      item.dataset.season = s.season_number;
+      item.setAttribute("role", "option");
+      seasonList.appendChild(item);
+      seasonItems.push(item);
     }
-    picker.appendChild(seasonSel);
+    picker.appendChild(seasonBtn);
+    picker.appendChild(seasonList);
     wrap.appendChild(picker);
     const grid = el("div", "ep-grid");
     wrap.appendChild(grid);
@@ -535,6 +549,33 @@ function renderDetail(d, currentEp) {
       grid.querySelectorAll(".ep-card").forEach((c) =>
         c.classList.toggle("selected", Number(c.dataset.ep) === n));
     };
+    // Keep keyboard focus in the episode list (the current card) rather than
+    // letting it fall back to the Play button.
+    const focusCurrentCard = () => {
+      const cards = [...grid.querySelectorAll(".ep-card")];
+      const cur = cards.find((c) => Number(c.dataset.ep) === selectedEp) || cards[0];
+      if (cur) cur.focus();
+    };
+    // Grid keyboard nav, added once (not per render) so listeners don't
+    // accumulate across season changes: arrows move between cards, Enter/Space
+    // plays the focused card.
+    grid.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
+        const card = e.target.closest(".ep-card");
+        if (!card) return;
+        e.preventDefault();
+        setEp(Number(card.dataset.ep));
+        startPlayback(d, btn, seasonSel, episodeSel);
+        return;
+      }
+      if (!["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp"].includes(e.key)) return;
+      e.preventDefault();
+      const cards = [...grid.querySelectorAll(".ep-card")];
+      const i = cards.indexOf(document.activeElement);
+      if (i === -1) { cards[0].focus(); return; }
+      const step = (e.key === "ArrowRight" || e.key === "ArrowDown") ? 1 : -1;
+      (cards[i + step] || cards[0]).focus();
+    });
 
     // Fetch a season's episodes and render them as cards (still, title,
     // synopsis). Stills are proxied + disk-cached like posters (offline-safe).
@@ -556,6 +597,8 @@ function renderDetail(d, currentEp) {
       for (const ep of eps) {
         const card = el("div", "ep-card");
         card.dataset.ep = ep.episode_number;
+        card.tabIndex = 0;
+        card.setAttribute("role", "button");
         const key = d.id + "-s" + season + "e" + ep.episode_number;
         const img = el("img", "ep-still");
         if (ep.still_path) {
@@ -575,9 +618,52 @@ function renderDetail(d, currentEp) {
       // Default to the user's current episode if it's in this season, else E1.
       const cur = currentEp && currentEp.season === season ? currentEp.episode : null;
       setEp(cur && cur >= 1 ? cur : 1);
+      focusCurrentCard();
     };
 
-    seasonSel.addEventListener("change", () => renderEpisodes(Number(seasonSel.value)));
+    const openSeasons = () => {
+      seasonList.classList.add("open");
+      seasonBtn.setAttribute("aria-expanded", "true");
+      seasonItems.forEach((it) => it.classList.toggle("active", Number(it.dataset.season) === curSeason));
+      seasonList.focus();
+    };
+    const closeSeasons = () => {
+      seasonList.classList.remove("open");
+      seasonBtn.setAttribute("aria-expanded", "false");
+      seasonBtn.focus();
+    };
+    const pickSeason = (n) => {
+      seasonList.classList.remove("open");
+      seasonBtn.setAttribute("aria-expanded", "false");
+      curSeason = n;
+      seasonBtn.textContent = `Season ${n}`;
+      renderEpisodes(n);
+    };
+    seasonBtn.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
+        e.preventDefault();
+        openSeasons();
+      } else if (e.key === "Escape") {
+        closeSeasons();
+      }
+    });
+    seasonBtn.addEventListener("click", () => {
+      if (seasonList.classList.contains("open")) closeSeasons();
+      else openSeasons();
+    });
+    seasonList.addEventListener("keydown", (e) => {
+      const active = seasonList.querySelector(".season-item.active");
+      let idx = seasonItems.indexOf(active);
+      if (e.key === "ArrowDown") { e.preventDefault(); idx = Math.min(idx + 1, seasonItems.length - 1); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); idx = Math.max(idx - 1, 0); }
+      else if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") { e.preventDefault(); pickSeason(Number(seasonItems[idx].dataset.season)); return; }
+      else if (e.key === "Escape") { e.preventDefault(); closeSeasons(); return; }
+      else return;
+      seasonItems.forEach((it, i) => it.classList.toggle("active", i === idx));
+      seasonItems[idx].scrollIntoView({ block: "nearest" });
+    });
+    seasonItems.forEach((it) => it.addEventListener("click", () => pickSeason(Number(it.dataset.season))));
+
     // Default to the user's current season/episode if listed, else S1E1.
     curSeason = d.seasons.find((s) => s.season_number !== 0).season_number;
     curEp = 1;
@@ -585,7 +671,7 @@ function renderDetail(d, currentEp) {
       curSeason = currentEp.season;
       curEp = (currentEp.episode && currentEp.episode >= 1) ? currentEp.episode : 1;
     }
-    seasonSel.value = String(curSeason);
+    seasonBtn.textContent = `Season ${curSeason}`;
     renderEpisodes(curSeason);
   }
 
