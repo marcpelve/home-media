@@ -64,7 +64,7 @@ async function showBackdrop(item) {
   if (backdropHideTimer) { clearTimeout(backdropHideTimer); backdropHideTimer = 0; }
   if (!currentBackdrop) return;
   const t = item.type ? "?type=" + item.type : "";
-  currentBackdrop.querySelector("img").src = API + "/tmdb/backdrop/" + item.id + t + "&size=w1280";
+  currentBackdrop.querySelector("img").src = API + "/tmdb/backdrop/" + item.id + t + "&size=w780";
   currentBackdrop.classList.add("show");
   const info = await fetchTitleInfo(item);
   if (currentHeroInfo) {
@@ -671,7 +671,7 @@ function renderDetail(d, currentEp) {
     const backdrop = el("div", "backdrop");
     const bimg = el("img");
     bimg.alt = "";
-    bimg.src = API + "/tmdb/backdrop/" + d.id + "?type=tv&size=w1280";
+    bimg.src = API + "/tmdb/backdrop/" + d.id + "?type=tv&size=w780";
     backdrop.appendChild(bimg);
     const heroInfo = el("div", "hero-info");
     heroInfo.appendChild(el("h1", "hero-title", d.title || d.name || ""));
