@@ -306,3 +306,110 @@ def test_poster_endpoint_type_aware(tmdb_app):
     # With type=movie, the movie (id 99) has no poster -> 404.
     resp2 = tc.get("/tmdb/poster/99", params={"type": "movie"})
     assert resp2.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# In-app auth (API token in the settings table)
+# ---------------------------------------------------------------------------
+
+VALID_TMDB_TOKEN = "valid_tmdb_token"
+
+
+def _tmdb_auth_handler(calls: list, valid_token: str):
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if str(request.url.path).endswith("/configuration"):
+            if request.headers.get("authorization") == f"Bearer {valid_token}":
+                return httpx.Response(200, json={"image": {"base_path": "/x"}})
+            return httpx.Response(401, json={"status_code": 401})
+        return httpx.Response(404, json={})
+    return handler
+
+
+@pytest.fixture
+def tmdb_auth_app(tmp_path: Path):
+    import asyncio
+
+    db_path = tmp_path / "auth.db"
+    init_db(db_path)
+    calls: list[httpx.Request] = []
+    transport = httpx.MockTransport(_tmdb_auth_handler(calls, VALID_TMDB_TOKEN))
+    http_client = httpx.AsyncClient(
+        base_url="https://api.themoviedb.org/3", transport=transport
+    )
+    # Start with no .env token so the settings key is the only source.
+    client = TmdbClient(token="", db_path=db_path, client=http_client)
+    app = FastAPI()
+    app.state.tmdb_client = client
+    app.include_router(tmdb_router)
+    with TestClient(app) as tc:
+        yield {"client": tc, "tmdb": client, "calls": calls, "http": http_client}
+    asyncio.run(http_client.aclose())
+
+
+def test_tmdb_status_not_configured(tmdb_auth_app):
+    tc = tmdb_auth_app["client"]
+    r = tc.get("/tmdb/status")
+    assert r.status_code == 200
+    assert r.json() == {"configured": False}
+
+
+def test_tmdb_auth_valid_stores_key(tmdb_auth_app):
+    tc = tmdb_auth_app["client"]
+    tmdb = tmdb_auth_app["tmdb"]
+    r = tc.post("/tmdb/auth", json={"key": VALID_TMDB_TOKEN})
+    assert r.status_code == 200
+    assert r.json() == {"configured": True}
+    assert tmdb.get_key() == VALID_TMDB_TOKEN
+    assert tc.get("/tmdb/status").json() == {"configured": True}
+
+
+def test_tmdb_auth_invalid_rejected(tmdb_auth_app):
+    tc = tmdb_auth_app["client"]
+    tmdb = tmdb_auth_app["tmdb"]
+    r = tc.post("/tmdb/auth", json={"key": "wrong_key"})
+    assert r.status_code == 401
+    # Nothing stored on failure.
+    assert tmdb.get_key() is None
+
+
+def test_tmdb_auth_empty_rejected(tmdb_auth_app):
+    tc = tmdb_auth_app["client"]
+    r = tc.post("/tmdb/auth", json={"key": "   "})
+    assert r.status_code == 400
+
+
+def test_tmdb_auth_clear(tmdb_auth_app):
+    tc = tmdb_auth_app["client"]
+    tmdb = tmdb_auth_app["tmdb"]
+    tc.post("/tmdb/auth", json={"key": VALID_TMDB_TOKEN})
+    r = tc.delete("/tmdb/auth")
+    assert r.status_code == 200
+    assert r.json() == {"configured": False}
+    assert tmdb.get_key() is None
+
+
+def test_tmdb_settings_key_overrides_env_token(tmp_path: Path):
+    """A key saved in-app wins over the .env-supplied token."""
+    import asyncio
+
+    db_path = tmp_path / "prec.db"
+    init_db(db_path)
+    calls: list[httpx.Request] = []
+    payloads = {"/trending/all/week": httpx.Response(200, json=TRENDING)}
+    transport = httpx.MockTransport(_make_handler(calls, payloads))
+    http_client = httpx.AsyncClient(
+        base_url="https://api.themoviedb.org/3", transport=transport
+    )
+    client = TmdbClient(token="env_token", db_path=db_path, client=http_client)
+    client.set_key("settings_token")
+    assert client._effective_key() == "settings_token"
+    assert client.is_configured() is True
+
+    async def run():
+        return await client.home()
+
+    asyncio.run(run())
+    # The request carried the settings key, not the env token.
+    assert calls[0].headers.get("authorization") == "Bearer settings_token"
+    asyncio.run(http_client.aclose())

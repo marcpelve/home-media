@@ -158,6 +158,21 @@ Full design: PLAN.md. This file tracks multi-session progress.
   itself now boots: binds :8790, /health -> ok, /library -> {"titles":[]}. The
   clean-machine handoff below now applies to these fresh installers (NSIS/MSI
   Nov 10 14:10; sidecar byte-matched to the fixed exe).
+- (2026-11-10) In-app auth for TMDB + Torbox (extends the Trakt settings
+  pattern; no kanban task, direct implementation). Both clients now store
+  their API key in the settings table with the .env value as fallback:
+  `set_key`/`get_key`/`clear_key`/`_effective_key`/`is_configured`/`validate`
+  on TmdbClient + TorboxClient. Requests send the effective key as a per-
+  request Bearer header, so a key saved in-app takes effect immediately (no
+  restart). New endpoints: GET /tmdb/status, POST /tmdb/auth (validate +
+  store; 401 on a bad key, 400 on empty), DELETE /tmdb/auth; and GET
+  /sources/status, POST /sources/auth, DELETE /sources/auth. Frontend: the
+  settings view now renders TMDB + Torbox panels (key input + Save + "get a
+  key" link when unconfigured; "Connected" + Remove when configured) plus a
+  .key-input style. Keys are validated against the live API before storing
+  (TMDB GET /configuration, Torbox GET /v1/api/torrents/mylist) and never
+  logged; the API is 127.0.0.1-only. Settings-table key overrides the .env
+  key (precedence). 12 new tests (123 total pass).
 
 ## Clean-machine handoff (the one thing that can't be done here)
 Copy one installer to a fresh Windows box (no prior Home Media install, no

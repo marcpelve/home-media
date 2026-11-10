@@ -66,6 +66,75 @@ class TmdbClient:
             await self._client.aclose()
             self._client = None
 
+    # -- API key (in-app auth) ------------------------------------------------
+
+    def _set_setting(self, key: str, value: str) -> None:
+        conn = sqlite3.connect(self._db_path)
+        try:
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _get_setting(self, key: str) -> str | None:
+        conn = sqlite3.connect(self._db_path)
+        try:
+            row = conn.execute(
+                "SELECT value FROM settings WHERE key = ?", (key,)
+            ).fetchone()
+            return row[0] if row else None
+        finally:
+            conn.close()
+
+    def set_key(self, key: str) -> None:
+        """Store the API token in the settings table (in-app auth)."""
+        self._set_setting("tmdb_api_key", key.strip())
+
+    def get_key(self) -> str | None:
+        """The API token stored in the settings table, if any."""
+        return self._get_setting("tmdb_api_key")
+
+    def clear_key(self) -> None:
+        """Remove the stored API token."""
+        conn = sqlite3.connect(self._db_path)
+        try:
+            conn.execute("DELETE FROM settings WHERE key = 'tmdb_api_key'")
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _effective_key(self) -> str:
+        """Token used for requests: the settings-table key wins over the
+        .env-supplied token, so a key saved in-app takes effect immediately."""
+        return self.get_key() or self._token
+
+    def is_configured(self) -> bool:
+        return bool(self._effective_key())
+
+    async def validate(self, key: str) -> bool:
+        """Check that an API token is accepted by TMDB (GET /configuration)."""
+        key = (key or "").strip()
+        if not key:
+            return False
+        created = self._client is None
+        if created:
+            await self.__aenter__()
+        client = self._client
+        assert client is not None
+        try:
+            resp = await client.get(
+                "/configuration",
+                headers={"Authorization": f"Bearer {key}"},
+            )
+            return resp.status_code == 200
+        finally:
+            if created:
+                await client.aclose()
+
     # -- cache helpers -------------------------------------------------------
 
     def _cache_get(self, path: str, ttl: int) -> dict | None:
@@ -122,7 +191,11 @@ class TmdbClient:
                 return cached
 
             client = self._client
-            resp = await client.get(path, params=params)
+            resp = await client.get(
+                path,
+                params=params,
+                headers={"Authorization": f"Bearer {self._effective_key()}"},
+            )
             resp.raise_for_status()
             data = resp.json()
             self._cache_set(cache_key, data, ttl)

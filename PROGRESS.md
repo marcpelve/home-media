@@ -3,7 +3,7 @@
 Lightweight native Windows media app to replace Kodi.
 Design: PLAN.md  ·  Detailed log: STATE.md  ·  This file: live phase progress.
 
-**8 / 9 phases done - P7 (packaging) complete pending clean-machine installer run; offline library built**
+**8 / 9 phases done - P7 (packaging) complete pending clean-machine installer run; offline library + TMDB/Torbox in-app auth built**
 
 ## Phases
 
@@ -37,6 +37,13 @@ Design: PLAN.md  ·  Detailed log: STATE.md  ·  This file: live phase progress.
 - [x] Phase C: frontend Library screen (grid -> title detail -> episodes + Play)
 - [x] Phase D: home "My Library" row (`Promise.allSettled`, offline-safe)
 - [x] Phase E: empty/error states, honest episode labels
+
+## In-app auth - TMDB + Torbox keys in the settings view
+
+- [x] TmdbClient + TorboxClient: settings-table key (set/get/clear), per-request Bearer, .env fallback, `validate()`
+- [x] Endpoints: `GET /tmdb/status` + `POST|DELETE /tmdb/auth`, `GET /sources/status` + `POST|DELETE /sources/auth`
+- [x] Frontend settings panels (key input + Save + "get a key" link; Connected + Remove)
+- [x] 12 new tests (123 total pass)
 
 ## Legend
 

@@ -7,7 +7,7 @@ for the target file.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from app.torbox import TorboxClient
@@ -37,3 +37,36 @@ async def resolve(req: ResolveRequest, request: Request):
         result["download_url"] = url
         result["file_id"] = target["file_id"]
     return result
+
+
+# ---------------------------------------------------------------------------
+# In-app auth (API key stored in the settings table)
+# ---------------------------------------------------------------------------
+
+class KeyRequest(BaseModel):
+    key: str
+
+
+@router.get("/status")
+async def status(request: Request) -> dict:
+    client = _get_client(request)
+    return {"configured": client.is_configured()}
+
+
+@router.post("/auth")
+async def set_key(payload: KeyRequest, request: Request) -> dict:
+    client = _get_client(request)
+    key = payload.key.strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="key required")
+    if not await client.validate(key):
+        raise HTTPException(status_code=401, detail="invalid Torbox key")
+    client.set_key(key)
+    return {"configured": True}
+
+
+@router.delete("/auth")
+async def clear_key(request: Request) -> dict:
+    client = _get_client(request)
+    client.clear_key()
+    return {"configured": False}

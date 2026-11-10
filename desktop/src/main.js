@@ -1456,8 +1456,12 @@ async function renderSettings() {
   app.innerHTML =
     '<div class="settings"><h1>Settings</h1>' +
     '<section class="trakt-panel" id="trakt-panel"><h2>Trakt</h2>' +
+    '<p class="muted">Loading&hellip;</p></section>' +
+    '<section class="trakt-panel" id="tmdb-panel"><h2>TMDB</h2>' +
+    '<p class="muted">Loading&hellip;</p></section>' +
+    '<section class="trakt-panel" id="torbox-panel"><h2>Torbox</h2>' +
     '<p class="muted">Loading&hellip;</p></section></div>';
-  await loadTraktStatus();
+  await Promise.all([loadTraktStatus(), loadTmdbStatus(), loadTorboxStatus()]);
 }
 
 async function loadTraktStatus() {
@@ -1532,6 +1536,108 @@ async function doTraktSync() {
     ? "Sync: " + res.error + " (pushed " + res.pushed + ", pulled " + res.pulled + ")"
     : "Synced: pushed " + res.pushed + ", pulled " + res.pulled + ".";
   setTimeout(loadTraktStatus, 600);
+}
+
+/* Settings: TMDB API token (stored in-app, validated on save) */
+async function loadTmdbStatus() {
+  const panel = document.getElementById("tmdb-panel");
+  if (!panel) return;
+  let st;
+  try { st = await api("/tmdb/status"); }
+  catch (e) { panel.innerHTML = '<h2>TMDB</h2><p class="muted">Status unavailable.</p>'; return; }
+  if (st.configured) {
+    panel.innerHTML = '<h2>TMDB</h2>' +
+      '<p>Connected. Metadata (posters, stills, titles) is enabled.</p>' +
+      '<button class="btn" id="tmdb-remove">Remove token</button>' +
+      '<p class="trakt-msg muted" id="tmdb-msg"></p>';
+    const b = document.getElementById("tmdb-remove");
+    if (b) b.addEventListener("click", removeTmdbKey);
+  } else {
+    panel.innerHTML = '<h2>TMDB</h2>' +
+      '<p class="muted">Not connected. Add your TMDB v4 token to enable metadata lookups.</p>' +
+      '<input type="password" class="key-input" id="tmdb-key" placeholder="TMDB v4 read token" autocomplete="off" spellcheck="false">' +
+      '<button class="btn" id="tmdb-save">Save token</button> ' +
+      '<a class="muted" href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">Get a token</a>' +
+      '<p class="trakt-msg muted" id="tmdb-msg"></p>';
+    const b = document.getElementById("tmdb-save");
+    if (b) b.addEventListener("click", saveTmdbKey);
+  }
+}
+
+async function saveTmdbKey() {
+  const input = document.getElementById("tmdb-key");
+  const msg = document.getElementById("tmdb-msg");
+  const key = input ? input.value.trim() : "";
+  if (!key) { if (msg) msg.textContent = "Enter a token first."; return; }
+  if (msg) msg.textContent = "Saving&hellip;";
+  try {
+    await api("/tmdb/auth", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key }),
+    });
+    loadTmdbStatus();
+  } catch (e) {
+    if (msg) msg.textContent = "Save failed: " + e.message;
+  }
+}
+
+async function removeTmdbKey() {
+  try {
+    await api("/tmdb/auth", { method: "DELETE" });
+    loadTmdbStatus();
+  } catch (e) { /* ignore */ }
+}
+
+/* Settings: Torbox API key (stored in-app, validated on save) */
+async function loadTorboxStatus() {
+  const panel = document.getElementById("torbox-panel");
+  if (!panel) return;
+  let st;
+  try { st = await api("/sources/status"); }
+  catch (e) { panel.innerHTML = '<h2>Torbox</h2><p class="muted">Status unavailable.</p>'; return; }
+  if (st.configured) {
+    panel.innerHTML = '<h2>Torbox</h2>' +
+      '<p>Connected. Debrid downloads are enabled.</p>' +
+      '<button class="btn" id="torbox-remove">Remove key</button>' +
+      '<p class="trakt-msg muted" id="torbox-msg"></p>';
+    const b = document.getElementById("torbox-remove");
+    if (b) b.addEventListener("click", removeTorboxKey);
+  } else {
+    panel.innerHTML = '<h2>Torbox</h2>' +
+      '<p class="muted">Not connected. Add your Torbox API key to enable debrid downloads.</p>' +
+      '<input type="password" class="key-input" id="torbox-key" placeholder="Torbox API key" autocomplete="off" spellcheck="false">' +
+      '<button class="btn" id="torbox-save">Save key</button> ' +
+      '<a class="muted" href="https://torbox.app" target="_blank" rel="noopener">Get a key</a>' +
+      '<p class="trakt-msg muted" id="torbox-msg"></p>';
+    const b = document.getElementById("torbox-save");
+    if (b) b.addEventListener("click", saveTorboxKey);
+  }
+}
+
+async function saveTorboxKey() {
+  const input = document.getElementById("torbox-key");
+  const msg = document.getElementById("torbox-msg");
+  const key = input ? input.value.trim() : "";
+  if (!key) { if (msg) msg.textContent = "Enter a key first."; return; }
+  if (msg) msg.textContent = "Saving&hellip;";
+  try {
+    await api("/sources/auth", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key }),
+    });
+    loadTorboxStatus();
+  } catch (e) {
+    if (msg) msg.textContent = "Save failed: " + e.message;
+  }
+}
+
+async function removeTorboxKey() {
+  try {
+    await api("/sources/auth", { method: "DELETE" });
+    loadTorboxStatus();
+  } catch (e) { /* ignore */ }
 }
 
 document.addEventListener("keydown", (e) => {

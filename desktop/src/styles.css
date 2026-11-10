@@ -457,6 +457,19 @@ select.focused { outline: 2px solid #fff; outline-offset: 2px; }
 }
 .trakt-auth-flow { margin-top: 14px; }
 .trakt-msg { font-size: 13px; min-height: 1em; margin-top: 10px; }
+.key-input {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 10px 0;
+  padding: 10px 12px;
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 14px;
+  color: var(--text);
+  background: #14141c;
+  border: 1px solid #2a2a35;
+  border-radius: 8px;
+}
+.key-input:focus { outline: none; border-color: var(--accent); }
 
 /* source picker modal */
 .overlay {

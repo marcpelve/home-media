@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 from app.tmdb import TmdbClient
 
@@ -160,3 +161,36 @@ async def image(request: Request, path: str, key: str, size: str = Query("w300")
     if dest is None:
         raise HTTPException(status_code=404, detail="Image unavailable")
     return FileResponse(str(dest))
+
+
+# ---------------------------------------------------------------------------
+# In-app auth (API token stored in the settings table)
+# ---------------------------------------------------------------------------
+
+class KeyRequest(BaseModel):
+    key: str
+
+
+@router.get("/status")
+async def status(request: Request) -> dict:
+    client = get_tmdb_client(request)
+    return {"configured": client.is_configured()}
+
+
+@router.post("/auth")
+async def set_key(payload: KeyRequest, request: Request) -> dict:
+    client = get_tmdb_client(request)
+    key = payload.key.strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="key required")
+    if not await client.validate(key):
+        raise HTTPException(status_code=401, detail="invalid TMDB token")
+    client.set_key(key)
+    return {"configured": True}
+
+
+@router.delete("/auth")
+async def clear_key(request: Request) -> dict:
+    client = get_tmdb_client(request)
+    client.clear_key()
+    return {"configured": False}

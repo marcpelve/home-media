@@ -308,3 +308,103 @@ def test_delete_download_endpoint(torbox_app):
     resp = tc.delete(f"/downloads/{dl_id}")
     assert resp.status_code == 200
     assert tc.get("/downloads").json()["downloads"] == []
+
+
+# ---------------------------------------------------------------------------
+# In-app auth (API key in the settings table)
+# ---------------------------------------------------------------------------
+
+VALID_TORBOX_KEY = "valid_torbox_key"
+
+
+def _torbox_auth_handler(calls: list, valid_key: str):
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if str(request.url.path).endswith("/mylist"):
+            if request.headers.get("authorization") == f"Bearer {valid_key}":
+                return httpx.Response(200, json={"success": True, "data": []})
+            return httpx.Response(401, json={"success": False, "data": None})
+        return httpx.Response(404, json={"success": False, "data": None})
+    return handler
+
+
+@pytest.fixture
+def torbox_auth_app(tmp_path: Path):
+    db_path = tmp_path / "auth.db"
+    init_db(db_path)
+    calls: list[httpx.Request] = []
+    transport = httpx.MockTransport(_torbox_auth_handler(calls, VALID_TORBOX_KEY))
+    http_client = httpx.AsyncClient(
+        base_url="https://api.torbox.app", transport=transport
+    )
+    # Start with no .env key so the settings key is the only source.
+    client = TorboxClient(api_key="", db_path=db_path, client=http_client)
+    app = FastAPI()
+    app.state.torbox_client = client
+    app.include_router(torbox_router)
+    with TestClient(app) as tc:
+        yield {"client": tc, "torbox": client, "calls": calls, "http": http_client}
+    asyncio.run(http_client.aclose())
+
+
+def test_torbox_status_not_configured(torbox_auth_app):
+    tc = torbox_auth_app["client"]
+    r = tc.get("/sources/status")
+    assert r.status_code == 200
+    assert r.json() == {"configured": False}
+
+
+def test_torbox_auth_valid_stores_key(torbox_auth_app):
+    tc = torbox_auth_app["client"]
+    torbox = torbox_auth_app["torbox"]
+    r = tc.post("/sources/auth", json={"key": VALID_TORBOX_KEY})
+    assert r.status_code == 200
+    assert r.json() == {"configured": True}
+    assert torbox.get_key() == VALID_TORBOX_KEY
+    assert tc.get("/sources/status").json() == {"configured": True}
+
+
+def test_torbox_auth_invalid_rejected(torbox_auth_app):
+    tc = torbox_auth_app["client"]
+    torbox = torbox_auth_app["torbox"]
+    r = tc.post("/sources/auth", json={"key": "wrong_key"})
+    assert r.status_code == 401
+    # Nothing stored on failure.
+    assert torbox.get_key() is None
+
+
+def test_torbox_auth_empty_rejected(torbox_auth_app):
+    tc = torbox_auth_app["client"]
+    r = tc.post("/sources/auth", json={"key": "   "})
+    assert r.status_code == 400
+
+
+def test_torbox_auth_clear(torbox_auth_app):
+    tc = torbox_auth_app["client"]
+    torbox = torbox_auth_app["torbox"]
+    tc.post("/sources/auth", json={"key": VALID_TORBOX_KEY})
+    r = tc.delete("/sources/auth")
+    assert r.status_code == 200
+    assert r.json() == {"configured": False}
+    assert torbox.get_key() is None
+
+
+def test_torbox_settings_key_overrides_env_key(tmp_path: Path):
+    """A key saved in-app wins over the .env-supplied key."""
+    db_path = tmp_path / "prec.db"
+    init_db(db_path)
+    calls: list[httpx.Request] = []
+    transport = httpx.MockTransport(_torbox_handler(calls, CHECK_TRUE, MYLIST, REQUEST_DL))
+    http_client = httpx.AsyncClient(base_url="https://api.torbox.app", transport=transport)
+    client = TorboxClient(api_key="env_key", db_path=db_path, client=http_client)
+    client.set_key("settings_key")
+    assert client._effective_key() == "settings_key"
+    assert client.is_configured() is True
+
+    async def run():
+        return await client.check_cached(HASH)
+
+    asyncio.run(run())
+    # The request carried the settings key, not the env key.
+    assert calls[0].headers.get("authorization") == "Bearer settings_key"
+    asyncio.run(http_client.aclose())

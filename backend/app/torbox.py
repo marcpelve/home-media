@@ -49,6 +49,78 @@ class TorboxClient:
             await self._client.aclose()
             self._client = None
 
+    # -- API key (in-app auth) ------------------------------------------------
+
+    def _set_setting(self, key: str, value: str) -> None:
+        conn = sqlite3.connect(self._db_path)
+        try:
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _get_setting(self, key: str) -> str | None:
+        conn = sqlite3.connect(self._db_path)
+        try:
+            row = conn.execute(
+                "SELECT value FROM settings WHERE key = ?", (key,)
+            ).fetchone()
+            return row[0] if row else None
+        finally:
+            conn.close()
+
+    def set_key(self, key: str) -> None:
+        """Store the API key in the settings table (in-app auth)."""
+        self._set_setting("torbox_api_key", key.strip())
+
+    def get_key(self) -> str | None:
+        """The API key stored in the settings table, if any."""
+        return self._get_setting("torbox_api_key")
+
+    def clear_key(self) -> None:
+        """Remove the stored API key."""
+        conn = sqlite3.connect(self._db_path)
+        try:
+            conn.execute("DELETE FROM settings WHERE key = 'torbox_api_key'")
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _effective_key(self) -> str:
+        """Key used for requests: the settings-table key wins over the
+        .env-supplied key, so a key saved in-app takes effect immediately."""
+        return self.get_key() or self._api_key
+
+    def is_configured(self) -> bool:
+        return bool(self._effective_key())
+
+    def _auth_headers(self) -> dict:
+        return {"Authorization": f"Bearer {self._effective_key()}"}
+
+    async def validate(self, key: str) -> bool:
+        """Check that an API key is accepted by Torbox (GET /mylist)."""
+        key = (key or "").strip()
+        if not key:
+            return False
+        created = self._client is None
+        if created:
+            await self.__aenter__()
+        client = self._client
+        assert client is not None
+        try:
+            resp = await client.get(
+                "/v1/api/torrents/mylist",
+                headers={"Authorization": f"Bearer {key}"},
+            )
+            return resp.status_code == 200
+        finally:
+            if created:
+                await client.aclose()
+
     # -- debrid_state cache --------------------------------------------------
 
     def _state_get(self, hash: str) -> sqlite3.Row | None:
@@ -81,7 +153,7 @@ class TorboxClient:
     async def _get(self, path: str, params: dict | None = None):
         """GET a Torbox path; return the `data` field of the JSON envelope."""
         client = self._client
-        resp = await client.get(path, params=params)
+        resp = await client.get(path, params=params, headers=self._auth_headers())
         resp.raise_for_status()
         return resp.json().get("data")
 
@@ -116,7 +188,9 @@ class TorboxClient:
         """
         client = self._client
         resp = await client.post(
-            "/v1/api/torrents/createtorrent", data={"magnet": magnet}
+            "/v1/api/torrents/createtorrent",
+            data={"magnet": magnet},
+            headers=self._auth_headers(),
         )
         resp.raise_for_status()
         data = resp.json().get("data")
@@ -128,10 +202,11 @@ class TorboxClient:
         resp = await client.get(
             "/v1/api/torrents/requestdl",
             params={
-                "token": self._api_key,
+                "token": self._effective_key(),
                 "torrent_id": torrent_id,
                 "file_id": file_id,
             },
+            headers=self._auth_headers(),
         )
         resp.raise_for_status()
         return self._extract_url(resp.json().get("data"))
@@ -170,7 +245,7 @@ class TorboxClient:
         """Resolve a presigned token to stream data."""
         data = await self._get(
             "/v1/api/stream/getstreamdata",
-            params={"token": self._api_key, "presigned_token": presigned_token},
+            params={"token": self._effective_key(), "presigned_token": presigned_token},
         )
         return data if isinstance(data, dict) else {}
 
