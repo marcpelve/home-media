@@ -8,8 +8,12 @@
 
 * { box-sizing: border-box; }
 
+html, body { height: 100%; }
 body {
   margin: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: var(--bg);
   color: var(--text);
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -20,9 +24,8 @@ body {
   align-items: center;
   gap: 24px;
   padding: 16px 28px;
-  position: sticky;
-  top: 0;
-  background: linear-gradient(#0b0b0f ee, #0b0b0f00);
+  flex: 0 0 auto;
+  background: var(--bg);
   z-index: 10;
 }
 
@@ -65,38 +68,87 @@ body {
 }
 #search:focus { border-color: var(--accent); }
 
-main { padding: 8px 28px 48px; position: relative; z-index: 1; }
+/* 10-foot layout: the app is a fixed 100vh column (no page scroll). Each view
+   is a flex column; views with a hero pin it at the top and scroll the rest. */
+#app { flex: 1 1 auto; overflow: hidden; min-height: 0; }
+.view { display: flex; flex-direction: column; height: 100%; overflow: hidden; min-height: 0; }
 
-/* Netflix/Prime-style hover backdrop: a large 16:9 image that fades in at the
-   top of the screen behind the content when you hover a card. */
-.backdrop {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 45vh;
-  z-index: 0;
+/* Pinned hero: backdrop fills it, info box sits bottom-left on top. */
+.hero {
+  flex: 0 0 42vh;
+  position: relative;
   overflow: hidden;
+  background: #000;
+}
+.hero .backdrop {
+  position: absolute;
+  inset: 0;
   opacity: 0;
   transition: opacity 0.35s ease;
-  pointer-events: none;
 }
-.backdrop.show { opacity: 1; }
-.backdrop img {
+.hero .backdrop.show { opacity: 1; }
+.hero .backdrop img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   object-position: center top;
 }
-/* Fade the bottom edge of the backdrop into the page so it blends. */
-.backdrop::after {
+.hero .backdrop::after {
   content: "";
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
-  height: 45%;
+  height: 55%;
   background: linear-gradient(to top, var(--bg) 0%, transparent 100%);
+}
+.hero-info {
+  position: absolute;
+  left: 28px;
+  bottom: 24px;
+  max-width: 460px;
+  z-index: 2;
+  pointer-events: none;
+}
+.hero-title {
+  font-size: 30px;
+  font-weight: 800;
+  margin: 0 0 8px;
+  text-shadow: 0 2px 14px rgba(0, 0, 0, 0.7);
+}
+.hero-synopsis {
+  font-size: 14px;
+  line-height: 1.5;
+  color: #e8e8ee;
+  margin: 0;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.8);
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.hero-meta {
+  font-size: 13px;
+  color: #c8c8d0;
+  margin: 0 0 8px;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8);
+}
+
+/* Scrollable content area (card rows, episode grid). */
+.view-content {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 0 28px 28px;
+}
+
+/* Non-hero views (library, search, settings, movie detail, now playing): the
+   whole view scrolls internally, no pinned hero. */
+.view-scroll {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 0 28px 28px;
 }
 
 .row { margin-top: 24px; }
