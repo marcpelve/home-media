@@ -128,12 +128,46 @@ Full design: PLAN.md. This file tracks multi-session progress.
   others. Phase E: empty/error states and honest episode labels. 3 new pytest
   tests (88 total pass); browser-verified the home row, library grid,
   title/episode view, and local playback (mpv launches with the file).
+- (2026-11-10) P7 packaging finished (as far as possible without the user).
+  Found the prior one-dir backend + MSI/NSIS installers were STALE: built
+  Nov 9 04:11, before the offline library (routers/collection.py `/library`),
+  the main.py router wiring, and the latest watch/library changes landed - the
+  running exe 404'd on /library because of it. Rebuilt the one-dir backend
+  (backend.spec, PyInstaller) and re-ran the Tauri MSI+NSIS build from current
+  sources (Rust compiled in ~32s, mostly cached). Fixed a stale TMDB search
+  test fixture (SEARCH_MOVIE/SEARCH_TV lacked a `popularity` field, so the
+  popularity>=1.0 filter from commit b624424 dropped them and
+  test_search_endpoint_shape failed); 111 tests now pass. Local clean-machine
+  verification: fresh bundle boots in ~1s, /health ok, /library returns
+  {"titles":[]} (offline route now present), /trakt/status degrades gracefully
+  (no .env); NSIS confirmed to embed the fresh sidecar
+  (resources/home-media/home-media.exe, exact byte match). Rust sidecar
+  spawn (dual-path resource_dir) + kill-on-close present; frontend
+  startup-grace (poll /health 750ms, 20s timeout, Starting/Retry) present.
+  Remaining: clean-machine installer run (needs the user - handoff below).
+
+## Clean-machine handoff (the one thing that can't be done here)
+Copy one installer to a fresh Windows box (no prior Home Media install, no
+dev tools) and verify:
+1. NSIS: `desktop/src-tauri/target/release/bundle/nsis/Home Media_0.1.0_x64-setup.exe`
+   (or MSI: `desktop/src-tauri/target/release/bundle/msi/Home Media_0.1.0_x64_en-US.msi`).
+   Run the installer.
+2. Launch "Home Media". Expect a brief "Starting..." then the home screen
+   (Continue Watching / Trending / My Library). The sidecar binds :8790 in ~1-2s.
+3. Offline library works with no .env (empty until you download content);
+   Trakt shows "not connected" until you add a .env next to the installed
+   backend and sign in.
+4. Close the window. Verify the backend exits: `netstat -ano | findstr 8790`
+   shows nothing, and no stray home-media.exe remains in Task Manager.
+Expected: clean install -> app launches to home -> closing the window kills
+the backend (port 8790 released).
 
 ## Next
 - [-] P6: Frontend (home, search, detail, picker, playback UI, Trakt panel,
   offline library done; E2E playback still blocked on a real Torbox API key)
-- [-] P7: Packaging (one-dir sidecar + startup grace + installers done;
-  installer still needs a clean-machine verification run)
+- [x] P7: Packaging (one-dir sidecar + startup grace + MSI/NSIS installers
+  built from current sources; local verification done - only the
+  clean-machine installer run remains, see the handoff above)
 - (done) Tauri sidecar/process management - the Tauri app now owns the
   backend lifecycle (spawn on launch / kill on close).
 

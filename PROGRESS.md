@@ -3,7 +3,7 @@
 Lightweight native Windows media app to replace Kodi.
 Design: PLAN.md  ·  Detailed log: STATE.md  ·  This file: live phase progress.
 
-**8 / 9 phases done - P7 (packaging) in progress; offline library built**
+**8 / 9 phases done - P7 (packaging) complete pending clean-machine installer run; offline library built**
 
 ## Phases
 
@@ -15,9 +15,9 @@ Design: PLAN.md  ·  Detailed log: STATE.md  ·  This file: live phase progress.
 - [x] P4   mpv playback (JSON-IPC + watch progress)
 - [x] P5   Trakt sync (device flow + PKCE, local fallback)
 - [x] P6   Frontend (browse, search, detail, picker, playback, Trakt panel, keyboard nav)
-- [-] P7   Packaging  <- IN PROGRESS
+- [-] P7   Packaging  <- all buildable work done; only clean-machine run remains
 
-## P7 - current focus
+## P7 - Packaging (complete pending clean-machine run)
 
 - [x] PyInstaller backend `home-media.exe` (one-DIR, windowed) - fast startup (~0s)
 - [x] Packaging-aware config (exe-relative `.env`, `data/`, `mpv.exe` when frozen)
@@ -25,8 +25,10 @@ Design: PLAN.md  ·  Detailed log: STATE.md  ·  This file: live phase progress.
 - [x] Tauri sidecar wired (`resources/home-media` folder, spawn on launch / kill on close)
 - [x] Frontend `dist/` built for bundling
 - [x] Frontend startup grace (polls /health, "Starting" state, Retry button)
-- [x] Tauri app + Windows installer built (MSI + NSIS)
-- [ ] Installer verified on a clean machine (needs the user to run it)
+- [x] Tauri app + Windows installer built (MSI + NSIS) - **rebuilt from current
+  sources 2026-11-10** (prior installers were stale: predated the offline library)
+- [x] Backend tests green (111 pass) - fixed a stale TMDB search fixture
+- [ ] Installer verified on a clean machine (needs the user - see STATE.md handoff)
 
 ## Offline library - browse + play downloaded content with no internet
 
