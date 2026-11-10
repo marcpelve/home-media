@@ -173,6 +173,18 @@ Full design: PLAN.md. This file tracks multi-session progress.
   (TMDB GET /configuration, Torbox GET /v1/api/torrents/mylist) and never
   logged; the API is 127.0.0.1-only. Settings-table key overrides the .env
   key (precedence). 12 new tests (123 total pass).
+- (2026-11-10) Fixed the mouse hover/scroll feedback loop on the home rows
+  and the episode grid (Kodi-style pointer-moved discriminator). Hovering a
+  card moves focus + scrolls it into view, but that scroll left a different
+  card under the stationary cursor, whose mouseenter re-focused and re-scrolled,
+  chaining into a jitter loop. Added a pointerMoved flag (set on mousemove,
+  cleared on each focus change) plus a 120ms scroll lock armed in setFocus /
+  after the episode card.focus(). The card mouseenter handler now ignores
+  hovers with no physical pointer move or within the lock, so scroll-induced
+  re-hovers no longer change focus/scroll; a real mouse move still drives
+  hover-to-navigate. Scoped to main.js (home rows + episode cards).
+  Browser-verified both: real move -> focus/select, scroll-induced hover ->
+  ignored, re-armed move -> focus/select.
 
 ## Clean-machine handoff (the one thing that can't be done here)
 Copy one installer to a fresh Windows box (no prior Home Media install, no

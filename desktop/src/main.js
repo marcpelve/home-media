@@ -390,7 +390,16 @@ function makeCard(item, { withProgress = false } = {}) {
   });
   // Netflix/Prime-style: hovering a card updates the backdrop at the top
   // and moves the focus there so keyboard nav picks up from the mouse.
-  card.addEventListener("mouseenter", () => { showBackdrop(item); focusFromHover(card); });
+  card.addEventListener("mouseenter", () => {
+    // Ignore hovers that are just the page scrolling under a stationary cursor
+    // (no physical mouse move, or still within the scroll lock). A real mouse
+    // move sets pointerMoved, so deliberate hover-to-navigate still works; this
+    // only stops the scroll-induced re-hover chain from re-focusing/re-scrolling.
+    if (!pointerMoved || Date.now() < scrollLockUntil) return;
+    pointerMoved = false;
+    showBackdrop(item);
+    focusFromHover(card);
+  });
   return card;
 }
 
@@ -829,7 +838,18 @@ function renderDetail(d, currentEp) {
         if (ep.overview) body.appendChild(el("div", "ep-overview", ep.overview));
         card.appendChild(body);
         card.addEventListener("click", () => { setEp(ep.episode_number); startPlayback(d, btn, seasonSel, episodeSel); });
-        card.addEventListener("mouseenter", () => { card.focus(); setEp(ep.episode_number); });
+        card.addEventListener("mouseenter", () => {
+          // Same pointer-moved guard as the home rows: card.focus() scrolls the
+          // card into view, which would otherwise leave a different card under
+          // the stationary cursor and chain into a re-hover loop. Ignore hovers
+          // that are just scroll-induced (no physical move / within the lock); a
+          // real mouse move re-arms pointerMoved so hover-to-select still works.
+          if (!pointerMoved || Date.now() < scrollLockUntil) return;
+          pointerMoved = false;
+          card.focus();
+          setEp(ep.episode_number);
+          scrollLockUntil = Date.now() + 120;
+        });
         grid.appendChild(card);
       }
       // Default to the user's current episode if it's in this season, else E1.
@@ -1305,6 +1325,14 @@ searchInput.addEventListener("input", () => {
 let focusRows = [];
 let focusRow = 0;
 let focusCol = 0;
+// Pointer-moved discriminator: a card only grabs focus on hover if the mouse
+// physically moved there. When a row scrolls into view, a different card ends
+// up under the stationary cursor; without this guard that card's mouseenter
+// would re-focus and re-scroll, chaining into a jitter loop. A short scroll
+// lock swallows any spurious hover fired in the same frame as a programmatic
+// scroll (touchpad drift, etc.).
+let pointerMoved = false;
+let scrollLockUntil = 0;
 
 function focusables() {
   const overlay = document.querySelector(".overlay");
@@ -1376,6 +1404,11 @@ function setFocus(row, col) {
   const el = r[focusCol];
   if (el) {
     el.classList.add("focused");
+    // Any focus change (keyboard or hover) scrolls the page. Arm a short scroll
+    // lock and clear the pointer-moved flag so the next hover only re-focuses if
+    // the mouse genuinely moves again (breaks the hover/scroll feedback loop).
+    scrollLockUntil = Date.now() + 120;
+    pointerMoved = false;
     if (el.tagName === "INPUT") el.focus(); // real focus so the search bar accepts typing
     el.scrollIntoView({ block: "nearest", inline: "nearest" });
     // Scroll so the row's header sits just below the hero banner. This keeps
@@ -1697,6 +1730,11 @@ document.addEventListener("keydown", (e) => {
     }
   }
 });
+
+// Track physical pointer movement so hover-to-focus can be told apart from a
+// card that merely scrolled under a stationary cursor (see the mouseenter
+// guard in the card builder). A real move re-arms pointerMoved.
+document.addEventListener("mousemove", () => { pointerMoved = true; });
 
 // Clicking outside an open season dropdown closes it (dismiss the menu without
 // re-clicking the season button).

@@ -45,6 +45,13 @@ Design: PLAN.md  ·  Detailed log: STATE.md  ·  This file: live phase progress.
 - [x] Frontend settings panels (key input + Save + "get a key" link; Connected + Remove)
 - [x] 12 new tests (123 total pass)
 
+## Hover/scroll guard - pointer-moved discriminator (Kodi-style)
+
+- [x] pointerMoved flag (mousemove) + 120ms scroll lock; hover only re-focuses on a real pointer move
+- [x] Home rows: card mouseenter guard (breaks the scroll-induced re-hover loop)
+- [x] Episode grid: same guard on card mouseenter (after card.focus())
+- [x] Browser-verified home + episode: real move focuses, scroll-induced ignored, re-arm works
+
 ## Legend
 
 `[x]` done  ·  `[-]` in progress  ·  `[ ]` not started
