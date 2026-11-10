@@ -509,8 +509,11 @@ function renderDetail(d, currentEp) {
   info.appendChild(el("div", "meta", [year, genres, `\u2605 ${d.vote_average ?? "\u2014"}`].filter(Boolean).join("   ")));
   info.appendChild(el("div", "overview", d.overview || ""));
 
-  let seasonSel = null, episodeSel = null;
+  let seasonSel = null, episodeSel = null, selectedEp = 1;
   if (d._type === "tv" && Array.isArray(d.seasons) && d.seasons.length) {
+    // Proxy so the downstream play/prefetch/mark-watched code that reads
+    // episodeSel.value keeps working; the episode grid is the real selector.
+    episodeSel = { get value() { return String(selectedEp); } };
     const picker = el("div", "ep-picker");
     seasonSel = el("select");
     for (const s of d.seasons) {
@@ -520,37 +523,64 @@ function renderDetail(d, currentEp) {
       opt.textContent = `Season ${s.season_number}`;
       seasonSel.appendChild(opt);
     }
-    episodeSel = el("select");
-    const fillEps = (count) => {
-      episodeSel.innerHTML = "";
-      for (let i = 1; i <= count; i++) {
-        const opt = document.createElement("option");
-        opt.value = i;
-        opt.textContent = `Episode ${i}`;
-        episodeSel.appendChild(opt);
-      }
-    };
-    const firstSeason = d.seasons.find((s) => s.season_number !== 0);
-    if (firstSeason) fillEps(firstSeason.episode_count || 1);
-    // Default to the episode the user is on (local watch progress), when it
-    // maps to a season this title lists; otherwise keep S1E1.
-    if (currentEp) {
-      const cs = d.seasons.find((x) => x.season_number === currentEp.season);
-      if (cs) {
-        seasonSel.value = String(currentEp.season);
-        fillEps(cs.episode_count || 1);
-        if (currentEp.episode <= (cs.episode_count || 1)) episodeSel.value = String(currentEp.episode);
-      }
-    }
-    seasonSel.addEventListener("change", () => {
-      const s = d.seasons.find((x) => x.season_number === Number(seasonSel.value));
-      fillEps(s ? s.episode_count || 1 : 1);
-      schedulePrefetch(d, seasonSel, episodeSel);
-    });
-    episodeSel.addEventListener("change", () => schedulePrefetch(d, seasonSel, episodeSel));
     picker.appendChild(seasonSel);
-    picker.appendChild(episodeSel);
     info.appendChild(picker);
+    const grid = el("div", "ep-grid");
+    info.appendChild(grid);
+
+    const setEp = (n) => {
+      selectedEp = n;
+      grid.querySelectorAll(".ep-card").forEach((c) =>
+        c.classList.toggle("selected", Number(c.dataset.ep) === n));
+    };
+
+    // Fetch a season's episodes and render them as cards (still, title,
+    // synopsis). Stills are proxied + disk-cached like posters (offline-safe).
+    const renderEpisodes = async (season) => {
+      grid.innerHTML = "";
+      grid.appendChild(el("div", "ep-loading", "Loading episodes..."));
+      let eps = [];
+      try {
+        const data = await api(`/tmdb/season/${d.id}/${season}`);
+        eps = (data.episodes || []).slice()
+          .sort((a, b) => a.episode_number - b.episode_number);
+      } catch (e) {
+        grid.innerHTML = "";
+        grid.appendChild(el("div", "muted", "Could not load episodes."));
+        return;
+      }
+      grid.innerHTML = "";
+      if (!eps.length) { grid.appendChild(el("div", "muted", "No episodes found.")); return; }
+      for (const ep of eps) {
+        const card = el("div", "ep-card");
+        card.dataset.ep = ep.episode_number;
+        const key = d.id + "-s" + season + "e" + ep.episode_number;
+        const img = el("img", "ep-still");
+        if (ep.still_path) {
+          img.src = API + "/tmdb/image?path=" + encodeURIComponent(ep.still_path)
+            + "&key=" + encodeURIComponent(key) + "&size=w300";
+        } else {
+          card.classList.add("no-still");
+        }
+        card.appendChild(img);
+        const body = el("div", "ep-body");
+        body.appendChild(el("div", "ep-name", `E${ep.episode_number} \u00b7 ${ep.name || "Untitled"}`));
+        if (ep.overview) body.appendChild(el("div", "ep-overview", ep.overview));
+        card.appendChild(body);
+        card.addEventListener("click", () => { setEp(ep.episode_number); schedulePrefetch(d, seasonSel, episodeSel); });
+        grid.appendChild(card);
+      }
+      // Default to the user's current episode if it's in this season, else E1.
+      const cur = currentEp && currentEp.season === season ? currentEp.episode : null;
+      setEp(cur && cur >= 1 ? cur : 1);
+    };
+
+    seasonSel.addEventListener("change", () => renderEpisodes(Number(seasonSel.value)));
+    // Default season: the user's current episode's season if listed, else first.
+    let defSeason = d.seasons.find((s) => s.season_number !== 0).season_number;
+    if (currentEp && d.seasons.some((x) => x.season_number === currentEp.season)) defSeason = currentEp.season;
+    seasonSel.value = String(defSeason);
+    renderEpisodes(defSeason);
   }
 
   const btn = el("button", "btn", "Play");

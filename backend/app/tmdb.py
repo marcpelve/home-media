@@ -242,6 +242,10 @@ class TmdbClient:
         tv_reviews = await _try_reviews("tv")
         return {"results": tv_reviews, "type": "tv"}
 
+    async def season_episodes(self, tmdb_id: int, season: int) -> dict:
+        """Episodes for a season; each carries still_path, name, overview."""
+        return await self._fetch(f"tv/{tmdb_id}/season/{season}", TTL_DETAILS)
+
     # -- poster helpers -------------------------------------------------------
 
     def poster_url(self, path: str | None, size: str = "w342") -> str | None:
@@ -279,6 +283,31 @@ class TmdbClient:
         if client is None:
             return None
         resp = await client.get(url)
+        resp.raise_for_status()
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(resp.content)
+        return dest
+
+    async def get_image(self, path: str | None, key: str, size: str = "w300") -> Path | None:
+        """Download + cache an arbitrary TMDB image (e.g. an episode still).
+
+        key is a stable unique filename stem (e.g. "<id>-s1e2"); the file
+        extension comes from the image path.
+        """
+        if not path:
+            return None
+        ext = Path(path).suffix or ".jpg"
+        dest = (self._poster_dir / f"{key}{ext}") if self._poster_dir else None
+        if dest is None:
+            return None
+        if dest.exists():
+            age = time.time() - dest.stat().st_mtime
+            if age < TTL_POSTER:
+                return dest
+        client = self._client
+        if client is None:
+            return None
+        resp = await client.get(f"https://image.tmdb.org/t/p/{size}{path}")
         resp.raise_for_status()
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(resp.content)

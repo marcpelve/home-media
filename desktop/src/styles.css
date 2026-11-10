@@ -153,6 +153,45 @@ main { padding: 8px 28px 48px; }
 .ep-row .ep-status { color: var(--muted); font-size: 13px; flex: 1; }
 .ep-row .btn { margin-top: 0; padding: 8px 18px; font-size: 13px; }
 
+/* TV season: episode card grid (Amazon-Prime style) */
+.ep-picker { margin: 18px 0 14px; }
+.ep-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+  max-width: 920px;
+}
+.ep-card {
+  background: var(--panel);
+  border: 1px solid #2a2a35;
+  border-radius: 10px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+.ep-card:hover { transform: translateY(-2px); border-color: #3a3a48; }
+.ep-card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.ep-card .ep-still {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  display: block;
+  background: #101015;
+}
+.ep-card.no-still .ep-still { display: none; }
+.ep-card .ep-body { padding: 10px 12px 12px; }
+.ep-card .ep-name { font-size: 13px; font-weight: 600; margin-bottom: 5px; }
+.ep-card .ep-overview {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.ep-loading { grid-column: 1 / -1; color: var(--muted); padding: 8px 0; }
+
 .btn {
   margin-top: 20px;
   padding: 12px 28px;

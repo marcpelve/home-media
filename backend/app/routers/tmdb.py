@@ -111,3 +111,23 @@ async def poster(request: Request, tmdb_id: int, size: str = Query("w342"), medi
         raise HTTPException(status_code=404, detail="Poster unavailable")
 
     return FileResponse(str(dest))
+
+
+@router.get("/season/{tmdb_id}/{season}")
+async def season(request: Request, tmdb_id: int, season: int):
+    """Episodes for a season (still, name, synopsis per episode)."""
+    client = get_tmdb_client(request)
+    try:
+        return await client.season_episodes(tmdb_id, season)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Season not found")
+
+
+@router.get("/image")
+async def image(request: Request, path: str, key: str, size: str = Query("w300")):
+    """Serve a cached TMDB image (e.g. an episode still); downloads on miss."""
+    client = get_tmdb_client(request)
+    dest = await client.get_image(path, key, size)
+    if dest is None:
+        raise HTTPException(status_code=404, detail="Image unavailable")
+    return FileResponse(str(dest))
