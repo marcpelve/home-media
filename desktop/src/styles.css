@@ -100,6 +100,7 @@ main { padding: 8px 28px 48px; }
 }
 .cat-tab:hover { color: var(--text); }
 .cat-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.cat-tab.focused { box-shadow: 0 0 0 3px var(--accent); color: var(--text); }
 
 .card {
   flex: 0 0 auto;
