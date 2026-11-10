@@ -354,6 +354,15 @@ def test_tmdb_status_not_configured(tmdb_auth_app):
     assert r.json() == {"configured": False}
 
 
+def test_tmdb_data_endpoints_503_when_unconfigured(tmdb_auth_app):
+    """Data endpoints return 503 (not a raw 500) when no TMDB token is set."""
+    tc = tmdb_auth_app["client"]
+    for path in ["/tmdb/home", "/tmdb/popular", "/tmdb/latest", "/tmdb/categories"]:
+        r = tc.get(path)
+        assert r.status_code == 503, f"{path}: expected 503, got {r.status_code}"
+        assert r.json()["detail"] == "TMDB not configured"
+
+
 def test_tmdb_auth_valid_stores_key(tmdb_auth_app):
     tc = tmdb_auth_app["client"]
     tmdb = tmdb_auth_app["tmdb"]

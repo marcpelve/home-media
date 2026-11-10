@@ -590,3 +590,73 @@ select.focused { outline: 2px solid #fff; outline-offset: 2px; }
   font-weight: 600;
 }
 .btn-ghost:hover { color: var(--text); filter: none; }
+
+/* Service status cluster (top bar): a dot per service that needs attention */
+.svc-status { display: inline-flex; align-items: center; gap: 6px; }
+.svc-dot {
+  position: relative;
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #e0a13a;
+  cursor: help;
+  box-shadow: 0 0 0 2px rgba(224, 161, 58, 0.22);
+}
+.svc-tip {
+  display: none;
+  position: absolute;
+  top: calc(100% + 10px);
+  right: -4px;
+  width: 244px;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid #2c2c36;
+  border-radius: 10px;
+  padding: 11px 13px;
+  z-index: 60;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  font-size: 13px;
+  line-height: 1.45;
+  text-align: left;
+}
+.svc-dot:hover .svc-tip { display: flex; }
+.svc-tip strong { font-size: 14px; }
+.svc-tip .svc-msg { color: var(--muted); }
+.svc-fix {
+  margin-top: 3px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 7px;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.svc-fix:hover { filter: brightness(1.12); }
+
+/* Home: a service missing a key, shown right where its rows would be */
+.svc-note {
+  margin: 20px 4px;
+  padding: 16px 20px;
+  background: rgba(224, 161, 58, 0.10);
+  border: 1px solid rgba(224, 161, 58, 0.38);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: #e9dcc2;
+  font-size: 14px;
+}
+.svc-note .btn { margin-left: auto; }
+
+/* Flash a settings panel when jumped to from the status box */
+.panel-highlight { animation: panelflash 1.6s ease; }
+@keyframes panelflash {
+  0%, 55% { box-shadow: 0 0 0 3px rgba(224, 161, 58, 0.65); }
+  100% { box-shadow: 0 0 0 0 rgba(224, 161, 58, 0); }
+}

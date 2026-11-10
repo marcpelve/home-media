@@ -185,6 +185,14 @@ Full design: PLAN.md. This file tracks multi-session progress.
   hover-to-navigate. Scoped to main.js (home rows + episode cards).
   Browser-verified both: real move -> focus/select, scroll-induced hover ->
   ignored, re-armed move -> focus/select.
+- (2026-11-10) Service health UI: TMDB data endpoints return 503 "TMDB not
+  configured" (not a raw 500) when no token is set. Top-bar status cluster
+  shows one amber dot per unconfigured service (empty when all healthy);
+  pure-CSS hover tooltip carries the message + an "Open Settings" button that
+  jumps to the relevant panel. Home shows a contextual "set your TMDB key"
+  note when TMDB is unconfigured. Refresh hooks on key save/remove + Trakt
+  sign-in/out. 1 new test (124 total pass). Browser-verified the dot render
+  + hidden-by-default tooltip.
 
 ## Clean-machine handoff (the one thing that can't be done here)
 Copy one installer to a fresh Windows box (no prior Home Media install, no

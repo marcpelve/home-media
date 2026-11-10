@@ -20,11 +20,18 @@ def get_tmdb_client(request: Request) -> TmdbClient:
     return request.app.state.tmdb_client
 
 
+def _ensure_configured(request: Request) -> None:
+    """Raise 503 when no TMDB token is set (settings table or .env)."""
+    if not get_tmdb_client(request).is_configured():
+        raise HTTPException(status_code=503, detail="TMDB not configured")
+
+
 MIN_POPULARITY = 1.0
 
 
 @router.get("/search")
 async def search(request: Request, q: str = Query(..., min_length=1)):
+    _ensure_configured(request)
     client = get_tmdb_client(request)
     data = await client.search(q)
     data["movie"] = [m for m in data.get("movie", []) if m.get("popularity", 0) >= MIN_POPULARITY]
@@ -34,30 +41,35 @@ async def search(request: Request, q: str = Query(..., min_length=1)):
 
 @router.get("/home")
 async def home(request: Request):
+    _ensure_configured(request)
     client = get_tmdb_client(request)
     return await client.home()
 
 
 @router.get("/popular")
 async def popular(request: Request):
+    _ensure_configured(request)
     client = get_tmdb_client(request)
     return await client.popular()
 
 
 @router.get("/latest")
 async def latest(request: Request):
+    _ensure_configured(request)
     client = get_tmdb_client(request)
     return await client.latest()
 
 
 @router.get("/categories")
 async def categories(request: Request):
+    _ensure_configured(request)
     client = get_tmdb_client(request)
     return await client.genres()
 
 
 @router.get("/title/{tmdb_id}")
 async def title(request: Request, tmdb_id: int, media_type: str = Query(None, alias="type")):
+    _ensure_configured(request)
     client = get_tmdb_client(request)
     try:
         # Prefer the caller's known type (home cards carry media_type) so a tv
@@ -79,6 +91,7 @@ async def title(request: Request, tmdb_id: int, media_type: str = Query(None, al
 
 @router.get("/reviews/{tmdb_id}")
 async def reviews(request: Request, tmdb_id: int):
+    _ensure_configured(request)
     client = get_tmdb_client(request)
     try:
         return await client.reviews(tmdb_id)
@@ -89,6 +102,7 @@ async def reviews(request: Request, tmdb_id: int):
 @router.get("/poster/{tmdb_id}")
 async def poster(request: Request, tmdb_id: int, size: str = Query("w342"), media_type: str = Query(None, alias="type")):
     """Serve the cached poster file; downloads + caches on miss."""
+    _ensure_configured(request)
     client = get_tmdb_client(request)
     # Prefer the durable local poster_path (offline-safe); fall back to
     # fetching details, which needs the 7-day title cache or a live call.
@@ -123,6 +137,7 @@ async def poster(request: Request, tmdb_id: int, size: str = Query("w342"), medi
 @router.get("/backdrop/{tmdb_id}")
 async def backdrop(request: Request, tmdb_id: int, size: str = Query("w1280"), media_type: str = Query(None, alias="type")):
     """Serve the cached backdrop for a title; downloads + caches on miss."""
+    _ensure_configured(request)
     client = get_tmdb_client(request)
     try:
         # TMDB shares numeric ids across media types; use the caller's type when
@@ -146,6 +161,7 @@ async def backdrop(request: Request, tmdb_id: int, size: str = Query("w1280"), m
 @router.get("/season/{tmdb_id}/{season}")
 async def season(request: Request, tmdb_id: int, season: int):
     """Episodes for a season (still, name, synopsis per episode)."""
+    _ensure_configured(request)
     client = get_tmdb_client(request)
     try:
         return await client.season_episodes(tmdb_id, season)
@@ -156,6 +172,7 @@ async def season(request: Request, tmdb_id: int, season: int):
 @router.get("/image")
 async def image(request: Request, path: str, key: str, size: str = Query("w300")):
     """Serve a cached TMDB image (e.g. an episode still); downloads on miss."""
+    _ensure_configured(request)
     client = get_tmdb_client(request)
     dest = await client.get_image(path, key, size)
     if dest is None:

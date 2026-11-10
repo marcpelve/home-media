@@ -323,6 +323,82 @@ document.getElementById("library").addEventListener("click", () => navPush("libr
 document.getElementById("settings").addEventListener("click", () => navPush("settings", {}));
 document.getElementById("power").addEventListener("click", exitAndSync);
 
+// ---- service status (TMDB / Torbox / Trakt) --------------------------------
+// A lightweight top-bar indicator: a dot per service that needs attention
+// (no key / not signed in). Hovering a dot shows a box explaining how to fix
+// it; "Open Settings" jumps to and highlights the relevant panel. Nothing
+// renders when every service is healthy. Driven by the three /status endpoints
+// (they read the in-app settings table, so no external calls — stays light).
+let svcStatus = null; // { tmdb: bool, torbox: bool, trakt: bool }
+
+const SVC_MESSAGES = {
+  tmdb: { name: "TMDB", msg: "Not configured. Add your token to enable metadata (trending, posters, titles)." },
+  torbox: { name: "Torbox", msg: "Not connected. Add your key to enable debrid downloads." },
+  trakt: { name: "Trakt", msg: "Not signed in. Sign in to sync watch history and continue-watching." },
+};
+
+async function getServiceStatus() {
+  const [tmdb, torbox, trakt] = await Promise.allSettled([
+    api("/tmdb/status"),
+    api("/sources/status"),
+    api("/trakt/status"),
+  ]);
+  svcStatus = {
+    tmdb: tmdb.status === "fulfilled" && tmdb.value.configured,
+    torbox: torbox.status === "fulfilled" && torbox.value.configured,
+    trakt: trakt.status === "fulfilled" && trakt.value.authenticated,
+  };
+  return svcStatus;
+}
+
+function refreshSvcStatus() {
+  return getServiceStatus().then(renderServiceStatus);
+}
+
+function renderServiceStatus() {
+  const wrap = document.getElementById("svc-status");
+  if (!wrap) return;
+  wrap.innerHTML = "";
+  if (!svcStatus) return;
+  for (const key of ["tmdb", "torbox", "trakt"]) {
+    if (svcStatus[key]) continue; // healthy -> no dot
+    const m = SVC_MESSAGES[key];
+    const dot = el("span", "svc-dot");
+    dot.title = m.name + " needs attention";
+    const tip = el("span", "svc-tip");
+    tip.innerHTML =
+      "<strong>" + m.name + "</strong>" +
+      '<span class="svc-msg">' + m.msg + "</span>" +
+      '<button class="svc-fix" data-panel="' + key + '-panel">Open Settings</button>';
+    dot.appendChild(tip);
+    wrap.appendChild(dot);
+  }
+}
+
+// One-time delegated handler: "Open Settings" from any status dot.
+document.getElementById("svc-status").addEventListener("click", (e) => {
+  const b = e.target.closest(".svc-fix");
+  if (b) openSettingsFor(b.dataset.panel);
+});
+
+function openSettingsFor(panelId) {
+  navPush("settings", {});
+  // renderSettings sets the panels synchronously, so a short delay is enough to
+  // scroll to + highlight the relevant one; retry briefly in case it's not up yet.
+  let tries = 0;
+  const go = () => {
+    const p = document.getElementById(panelId);
+    if (p) {
+      p.scrollIntoView({ behavior: "smooth", block: "start" });
+      p.classList.add("panel-highlight");
+      setTimeout(() => p.classList.remove("panel-highlight"), 1600);
+    } else if (++tries < 15) {
+      setTimeout(go, 40);
+    }
+  };
+  setTimeout(go, 40);
+}
+
 // ---- sync & quit ----
 // The power button fires a best-effort Trakt sync in the background (like
 // the source prefetch), then asks before quitting. Cancel: stay (the sync
@@ -527,16 +603,27 @@ async function renderHome(category) {
   stopPlayPoll();
   category = category || "all";
   app.innerHTML = "";
-  const [watch, popular, trending, latest, recs] = await Promise.allSettled([
+  const [watch, popular, trending, latest, recs, status] = await Promise.allSettled([
     api("/watch"),
     api("/tmdb/popular"),
     api("/tmdb/home"),
     api("/tmdb/latest"),
     api("/trakt/recommendations"),
+    getServiceStatus(),
   ]);
   const rows = buildHomeRows(watch, popular, trending, latest, recs);
   const allRejected = [watch, popular, trending, latest, recs].every((r) => r.status === "rejected");
   renderHomeRows(rows, category, allRejected);
+  // Surface a missing key right where that service's rows would be.
+  if (status.status === "fulfilled" && !status.value.tmdb) {
+    const note = el("div", "svc-note");
+    note.appendChild(el("span", null, "Set your TMDB key to see trending, popular, and latest."));
+    const btn = el("button", "btn", "Open Settings");
+    btn.addEventListener("click", () => openSettingsFor("tmdb-panel"));
+    note.appendChild(btn);
+    app.appendChild(note);
+  }
+  renderServiceStatus();
 }
 
 // ---- offline library (works with no internet) ----
@@ -1495,6 +1582,7 @@ async function renderSettings() {
     '<section class="trakt-panel" id="torbox-panel"><h2>Torbox</h2>' +
     '<p class="muted">Loading&hellip;</p></section></div>';
   await Promise.all([loadTraktStatus(), loadTmdbStatus(), loadTorboxStatus()]);
+  refreshSvcStatus();
 }
 
 async function loadTraktStatus() {
@@ -1551,7 +1639,7 @@ function pollTraktAuth() {
     if (st.status === "authorized") {
       clearInterval(traktPollTimer); traktPollTimer = null;
       if (msg) msg.textContent = "Connected as " + (st.username || "your account") + ".";
-      setTimeout(loadTraktStatus, 800);
+      setTimeout(() => { loadTraktStatus(); refreshSvcStatus(); }, 800);
     } else if (st.status === "expired") {
       clearInterval(traktPollTimer); traktPollTimer = null;
       if (msg) msg.textContent = "The code expired. Sign in again.";
@@ -1610,6 +1698,7 @@ async function saveTmdbKey() {
       body: JSON.stringify({ key }),
     });
     loadTmdbStatus();
+    refreshSvcStatus();
   } catch (e) {
     if (msg) msg.textContent = "Save failed: " + e.message;
   }
@@ -1619,6 +1708,7 @@ async function removeTmdbKey() {
   try {
     await api("/tmdb/auth", { method: "DELETE" });
     loadTmdbStatus();
+    refreshSvcStatus();
   } catch (e) { /* ignore */ }
 }
 
@@ -1661,6 +1751,7 @@ async function saveTorboxKey() {
       body: JSON.stringify({ key }),
     });
     loadTorboxStatus();
+    refreshSvcStatus();
   } catch (e) {
     if (msg) msg.textContent = "Save failed: " + e.message;
   }
@@ -1670,6 +1761,7 @@ async function removeTorboxKey() {
   try {
     await api("/sources/auth", { method: "DELETE" });
     loadTorboxStatus();
+    refreshSvcStatus();
   } catch (e) { /* ignore */ }
 }
 

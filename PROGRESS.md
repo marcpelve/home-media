@@ -52,6 +52,15 @@ Design: PLAN.md  ·  Detailed log: STATE.md  ·  This file: live phase progress.
 - [x] Episode grid: same guard on card mouseenter (after card.focus())
 - [x] Browser-verified home + episode: real move focuses, scroll-induced ignored, re-arm works
 
+## Service health UI - "set your key" messaging + 503 degradation
+
+- [x] Backend: TMDB data endpoints return `503 "TMDB not configured"` (not raw 500) when no token
+- [x] Frontend: top-bar status cluster - one amber dot per unconfigured service; empty when all healthy
+- [x] Pure-CSS hover tooltip: service name + message + "Open Settings" (jumps to the panel)
+- [x] Home: contextual "set your TMDB key" note when TMDB is unconfigured
+- [x] Refresh hooks on key save/remove + Trakt sign-in/out
+- [x] 1 new test (124 total pass)
+
 ## Legend
 
 `[x]` done  ·  `[-]` in progress  ·  `[ ]` not started
