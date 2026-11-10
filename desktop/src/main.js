@@ -498,9 +498,11 @@ function renderDetail(d, currentEp) {
   stopPlayPoll();
   app.innerHTML = "";
   const wrap = el("div", "detail");
+  const top = el("div", "detail-top");
   const img = el("img", "poster");
   img.src = d.poster_path ? `https://image.tmdb.org/t/p/w500${d.poster_path}` : "";
-  wrap.appendChild(img);
+  top.appendChild(img);
+  wrap.appendChild(top);
 
   const info = el("div", "info");
   info.appendChild(el("h1", null, d.title || d.name || "Unknown"));
@@ -524,9 +526,9 @@ function renderDetail(d, currentEp) {
       seasonSel.appendChild(opt);
     }
     picker.appendChild(seasonSel);
-    info.appendChild(picker);
+    wrap.appendChild(picker);
     const grid = el("div", "ep-grid");
-    info.appendChild(grid);
+    wrap.appendChild(grid);
 
     const setEp = (n) => {
       selectedEp = n;
@@ -608,7 +610,7 @@ function renderDetail(d, currentEp) {
   }
   info.appendChild(actionRow);
 
-  wrap.appendChild(info);
+  top.appendChild(info);
   app.appendChild(wrap);
   window.scrollTo(0, 0);
   // Kick off the background source prefetch once the user has settled on the

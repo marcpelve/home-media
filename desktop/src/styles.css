@@ -131,7 +131,8 @@ main { padding: 8px 28px 48px; }
 .progress > i { display: block; height: 100%; background: var(--accent); }
 
 /* detail view */
-.detail { display: flex; gap: 28px; padding-top: 16px; }
+.detail { padding-top: 16px; max-width: 1400px; margin: 0 auto; }
+.detail-top { display: flex; gap: 28px; align-items: flex-start; }
 .detail .poster { width: 280px; border-radius: 12px; object-fit: cover; flex: 0 0 auto; }
 .detail .info { flex: 1; }
 .detail h1 { font-size: 30px; margin: 0 0 8px; }
@@ -157,17 +158,16 @@ main { padding: 8px 28px 48px; }
 .ep-picker { margin: 18px 0 14px; }
 .ep-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 14px;
-  max-width: 920px;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 18px;
+  margin-top: 20px;
 }
 .ep-card {
   background: var(--panel);
-  border: 1px solid #2a2a35;
-  border-radius: 10px;
+  border-radius: 12px;
   overflow: hidden;
   cursor: pointer;
-  transition: transform 0.15s ease, border-color 0.15s ease;
+  transition: transform 0.15s ease;
 }
 .ep-card:hover { transform: translateY(-2px); border-color: #3a3a48; }
 .ep-card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
