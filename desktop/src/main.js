@@ -22,27 +22,89 @@ function el(tag, cls, text) {
   return n;
 }
 
-// Netflix/Prime-style hover backdrop: a large 16:9 image that fades in at the
-// top of the screen (behind the content) when you hover a card. Fixed + on
-// <body> so it survives re-renders (app.innerHTML = "").
-const backdrop = el("div", "backdrop");
-const backdropImg = el("img");
-backdropImg.alt = "";
-backdrop.appendChild(backdropImg);
-document.body.appendChild(backdrop);
+// Persistent hero on document.body (outside #app so the MutationObserver
+// never fires on its mutations). Shown on focus/hover, hidden on view change.
+let heroEl = null;
+let heroBackdrop = null;
+let heroInfo = null;
 let backdropHideTimer = null;
+const titleCache = {};
+
+function initHero() {
+  if (heroEl) return;
+  heroEl = document.createElement("div");
+  heroEl.className = "hero";
+  heroBackdrop = document.createElement("div");
+  heroBackdrop.className = "backdrop";
+  const img = document.createElement("img");
+  img.src = "data:image/gif;base64,R0lGODlhAQABAAAAACwAAAAAAQABAA==";
+  img.onerror = function () {
+    const cur = this.src;
+    if (cur.includes("w1920")) this.src = cur.replace("w1920", "w1280");
+  };
+  heroBackdrop.appendChild(img);
+  heroInfo = document.createElement("div");
+  heroInfo.className = "hero-info";
+  const h1 = document.createElement("h1");
+  h1.className = "hero-title";
+  const p = document.createElement("p");
+  p.className = "hero-synopsis";
+  heroInfo.appendChild(h1);
+  heroInfo.appendChild(p);
+  heroEl.appendChild(heroBackdrop);
+  heroEl.appendChild(heroInfo);
+  document.body.appendChild(heroEl);
+}
+
 function showBackdrop(item) {
   if (!item || !item.id) return;
   if (backdropHideTimer) { clearTimeout(backdropHideTimer); backdropHideTimer = null; }
-  const t = item.type ? "?type=" + item.type : "";
-  backdropImg.src = API + "/tmdb/backdrop/" + item.id + t + "&size=w1280";
-  backdrop.classList.add("show");
+  const mt = item._type || item.type;
+  const t = (mt === "movie" || mt === "tv") ? "?type=" + mt : "";
+  heroBackdrop.querySelector("img").src = API + "/tmdb/backdrop/" + item.id + t + "&size=w1920";
+  heroBackdrop.classList.add("show");
+  const key = item.id + "-" + (mt || "");
+  if (titleCache[key]) {
+    heroInfo.querySelector(".hero-title").textContent = titleCache[key].title;
+    heroInfo.querySelector(".hero-synopsis").textContent = titleCache[key].overview;
+  } else {
+    api("/tmdb/title/" + item.id + (t ? t : ""))
+      .then((d) => {
+        const info = { title: d.title || d.name || "", overview: d.overview || "" };
+        titleCache[key] = info;
+        if (heroBackdrop.classList.contains("show")) {
+          heroInfo.querySelector(".hero-title").textContent = info.title;
+          heroInfo.querySelector(".hero-synopsis").textContent = info.overview;
+        }
+      })
+      .catch(() => {});
+  }
 }
+
 function hideBackdrop() {
-  // Delay so sliding the pointer across adjacent cards doesn't flicker it off.
   if (backdropHideTimer) clearTimeout(backdropHideTimer);
-  backdropHideTimer = setTimeout(() => { backdrop.classList.remove("show"); backdropHideTimer = null; }, 250);
+  heroEl.classList.remove("full");
+  backdropHideTimer = setTimeout(() => {
+    heroBackdrop.classList.remove("show");
+    backdropHideTimer = null;
+  }, 250);
 }
+
+function hideHero() {
+  if (backdropHideTimer) { clearTimeout(backdropHideTimer); backdropHideTimer = null; }
+  heroBackdrop.classList.remove("show");
+  heroEl.classList.remove("full");
+  heroEl.style.display = "none";
+  document.body.classList.add("no-hero");
+  document.body.classList.remove("full-hero");
+}
+
+function showHero() {
+  heroEl.style.display = "block";
+  document.body.classList.remove("no-hero");
+}
+
+initHero();
 
 function esc(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => (
@@ -184,7 +246,7 @@ function navPush(view, params) {
   if (history.state && history.state.view === "home") {
     // Capture scroll + focus BEFORE detaching the DOM - detaching collapses the
     // page to height 0, which would reset scrollY to 0 and blur the focus.
-    const fe = document.activeElement;
+    const fe = currentFocus() || document.activeElement;
     const savedScroll = window.scrollY;
     const savedFocus = (fe && fe.dataset && fe.dataset.id) ? fe.dataset.id : null;
     homeStash = document.createElement("div");
@@ -219,6 +281,9 @@ function navHome() {
 window.addEventListener("popstate", (e) => {
   const s = e.state;
   if (!s || s.view === "home") {
+    showHero();
+    heroEl.classList.remove("full");
+    document.body.classList.remove("full-hero");
     if (homeStash && homeStash.childNodes.length) {
       // Restore the exact home DOM (no re-fetch): scroll, tab, and focus are
       // preserved because the same nodes come back.
@@ -229,7 +294,12 @@ window.addEventListener("popstate", (e) => {
         window.scrollTo(0, (s && s.scroll) || 0);
         if (s && s.focus) {
           const fe = document.querySelector('.card[data-id="' + s.focus + '"]');
-          if (fe) fe.focus();
+          if (fe) {
+            for (let r = 0; r < focusRows.length; r++) {
+              const c = focusRows[r].indexOf(fe);
+              if (c !== -1) { focusRow = r; focusCol = c; fe.classList.add("focused"); break; }
+            }
+          }
         }
       }, 0);
     } else {
@@ -281,6 +351,7 @@ function exitAndSync() {
 function makeCard(item, { withProgress = false } = {}) {
   const card = el("div", "card");
   card.dataset.id = item.id; // stable id so "back" can restore focus to this card
+  card._item = item; // reference for the hero backdrop
   const img = el("img", "poster");
   img.loading = "lazy";
   img.alt = item.title || item.name || "";
@@ -292,15 +363,21 @@ function makeCard(item, { withProgress = false } = {}) {
   }
   card.appendChild(img);
 
+  // Progress bar overlay at the bottom of the poster (red, Netflix-style).
+  // Movies only: TV show progress lives on individual episode cards, not the
+  // show card (the show card's position is just the current episode).
+  if (item.position_ms != null && (item.duration_ms > 0 || item.completed) && item.type !== "tv") {
+    const frac = item.completed ? 1 : Math.min(1, item.position_ms / item.duration_ms);
+    const bar = el("div", "card-progress");
+    const fill = el("i");
+    fill.style.width = (frac * 100) + "%";
+    bar.appendChild(fill);
+    if (item.completed) bar.appendChild(el("span", "card-check", "\u2713"));
+    card.appendChild(bar);
+  }
+
   const meta = el("div", "meta");
   meta.appendChild(el("div", "title", item.title || item.name || ""));
-  if (withProgress && item.duration_ms) {
-    const progress = el("div", "progress");
-    const bar = el("i");
-    bar.style.width = Math.min(100, (item.position_ms / item.duration_ms) * 100) + "%";
-    progress.appendChild(bar);
-    meta.appendChild(progress);
-  }
   card.appendChild(meta);
   card.tabIndex = 0; // focusable so "back" can restore focus here
   card.setAttribute("role", "button");
@@ -311,9 +388,9 @@ function makeCard(item, { withProgress = false } = {}) {
       navPush("detail", { id: item.id, type: item.type });
     }
   });
-  // Netflix/Prime-style: hovering a card fades in its backdrop at the top.
-  card.addEventListener("mouseenter", () => showBackdrop(item));
-  card.addEventListener("mouseleave", hideBackdrop);
+  // Netflix/Prime-style: hovering a card updates the backdrop at the top
+  // and moves the focus there so keyboard nav picks up from the mouse.
+  card.addEventListener("mouseenter", () => { showBackdrop(item); focusFromHover(card); });
   return card;
 }
 
@@ -361,6 +438,7 @@ function buildHomeRows(watch, popular, trending, latest, recs) {
       poster: it.poster,
       position_ms: it.position_ms,
       duration_ms: it.duration_ms,
+      completed: it.completed,
       season: it.season,
       episode: it.episode,
     }));
@@ -386,6 +464,9 @@ function buildHomeRows(watch, popular, trending, latest, recs) {
 
 function renderHomeRows(rows, category, allRejected) {
   app.innerHTML = "";
+  showHero();
+  heroEl.classList.remove("full");
+  document.body.classList.remove("full-hero");
   const tabs = el("div", "cat-tabs");
   for (const [val, label] of [["all", "All"], ["movie", "Movies"], ["tv", "TV"]]) {
     const t = el("button", "cat-tab" + (val === category ? " active" : ""), label);
@@ -452,6 +533,7 @@ async function renderHome(category) {
 // ---- offline library (works with no internet) ----
 async function renderLibrary() {
   stopPlayPoll();
+  hideHero();
   app.innerHTML = "";
   let data;
   try {
@@ -497,6 +579,7 @@ function makeLibraryCard(t) {
 
 async function openLibraryTitle(id) {
   stopPlayPoll();
+  hideHero();
   app.innerHTML = "";
   let data;
   try {
@@ -678,8 +761,19 @@ function renderDetail(d, currentEp) {
       else if (e.key === "ArrowDown") next = Math.min(i + cols, cards.length - 1);
       else next = Math.max(i - cols, 0);
       cards[next].focus();
-      // Keep the focused card in view so you can't select an episode off-screen.
-      cards[next].scrollIntoView({ block: "nearest" });
+      cards[next].scrollIntoView({ block: "center" });
+      // If the card ended up above the visible area (below the topbar),
+      // scroll up so the picker row is in view.
+      const rect = cards[next].getBoundingClientRect();
+      const tb = document.querySelector(".topbar");
+      const topLimit = (tb ? tb.offsetHeight : 0) + 8;
+      if (rect.top < topLimit) {
+        const pk = grid.closest(".detail")?.querySelector(".ep-picker");
+        if (pk) {
+          const pkPageY = pk.getBoundingClientRect().top + window.scrollY;
+          window.scrollTo(0, pkPageY - topLimit);
+        }
+      }
       });
 
     // Fetch a season's episodes and render them as cards (still, title,
@@ -688,10 +782,15 @@ function renderDetail(d, currentEp) {
       grid.innerHTML = "";
       grid.appendChild(el("div", "ep-loading", "Loading episodes..."));
       let eps = [];
+      let seasonProgress = {};
       try {
-        const data = await api(`/tmdb/season/${d.id}/${season}`);
+        const [data, prog] = await Promise.all([
+          api(`/tmdb/season/${d.id}/${season}`),
+          api(`/watch/progress/${d.id}/season/${season}`).catch(() => ({})),
+        ]);
         eps = (data.episodes || []).slice()
           .sort((a, b) => a.episode_number - b.episode_number);
+        seasonProgress = prog;
       } catch (e) {
         grid.innerHTML = "";
         grid.appendChild(el("div", "muted", "Could not load episodes."));
@@ -713,11 +812,24 @@ function renderDetail(d, currentEp) {
           card.classList.add("no-still");
         }
         card.appendChild(img);
+        const epProg = seasonProgress[ep.episode_number];
+        if (epProg) {
+          const frac = epProg.completed ? 1 : (epProg.duration_ms > 0 ? Math.min(1, epProg.position_ms / epProg.duration_ms) : 0);
+          if (frac > 0) {
+            const bar = el("div", "card-progress");
+            const fill = el("i");
+            fill.style.width = (frac * 100) + "%";
+            bar.appendChild(fill);
+            if (epProg.completed) bar.appendChild(el("span", "card-check", "\u2713"));
+            card.appendChild(bar);
+          }
+        }
         const body = el("div", "ep-body");
         body.appendChild(el("div", "ep-name", `E${ep.episode_number} \u00b7 ${ep.name || "Untitled"}`));
         if (ep.overview) body.appendChild(el("div", "ep-overview", ep.overview));
         card.appendChild(body);
         card.addEventListener("click", () => { setEp(ep.episode_number); startPlayback(d, btn, seasonSel, episodeSel); });
+        card.addEventListener("mouseenter", () => { card.focus(); setEp(ep.episode_number); });
         grid.appendChild(card);
       }
       // Default to the user's current episode if it's in this season, else E1.
@@ -791,7 +903,7 @@ function renderDetail(d, currentEp) {
   // Mark-as-watched controls (manual). A movie marks the title; a show marks
   // the selected episode, or the whole season.
   const actionRow = el("div", "btn-row");
-  let epBtn = null, markSeasonBtn = null;
+  let epBtn = null, markSeasonBtn = null, markShowBtn = null;
   if (d._type === "tv") {
     epBtn = el("button", "btn btn-ghost", "Mark episode watched");
     epBtn.addEventListener("click", () => markComplete(
@@ -801,8 +913,31 @@ function renderDetail(d, currentEp) {
     markSeasonBtn.addEventListener("click", () => markComplete(
       d, Number(seasonSel.value), Number(episodeSel.value), true, markSeasonBtn,
       cnt ? cnt.episode_count || 1 : 1));
+    markShowBtn = el("button", "btn btn-ghost", "Mark show watched");
+    markShowBtn.addEventListener("click", async () => {
+      markShowBtn.disabled = true;
+      markShowBtn.textContent = "Saving...";
+      try {
+        for (const s of d.seasons) {
+          if (s.season_number === 0) continue;
+          await api("/watch/complete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              title_id: d.id, season: s.season_number,
+              whole_season: true, episode_count: s.episode_count || 1,
+            }),
+          });
+        }
+        markShowBtn.textContent = "Marked \u2713";
+      } catch (e) {
+        markShowBtn.textContent = "Failed";
+      }
+      setTimeout(() => { markShowBtn.textContent = "Mark show watched"; markShowBtn.disabled = false; }, 2000);
+    });
     actionRow.appendChild(epBtn);
     actionRow.appendChild(markSeasonBtn);
+    actionRow.appendChild(markShowBtn);
   } else {
     const mBtn = el("button", "btn btn-ghost", "Mark as watched");
     mBtn.addEventListener("click", () => markComplete(d, null, null, false, mBtn));
@@ -816,7 +951,7 @@ function renderDetail(d, currentEp) {
   if (d._type === "tv") {
     picker.appendChild(btn);
     picker.appendChild(actionRow);
-    const rowBtns = [seasonBtn, btn, epBtn, markSeasonBtn];
+    const rowBtns = [seasonBtn, btn, epBtn, markSeasonBtn, markShowBtn];
     pickerActiveEl = seasonBtn;
     rowBtns.forEach((b) => b.addEventListener("focus", () => { pickerActiveEl = b; }));
     picker.addEventListener("keydown", (e) => {
@@ -846,6 +981,10 @@ function renderDetail(d, currentEp) {
   // Kick off the background source prefetch once the user has settled on the
   // card (debounced), so Play can show a populated or near-instant list.
   schedulePrefetch(d, seasonSel, episodeSel);
+  showHero();
+  heroEl.classList.add("full");
+  document.body.classList.add("full-hero");
+  showBackdrop(d);
 }
 
 // POST /watch/complete for the current selection. wholeSeason marks every
@@ -1031,6 +1170,7 @@ function fmtTime(sec) {
 
 function renderNowPlaying(d, source, season, episode) {
   stopPlayPoll();
+  hideHero();
   nowPlaying = { id: d.id, season, episode };
   app.innerHTML = "";
   const wrap = el("div", "nowplaying");
@@ -1100,6 +1240,7 @@ function renderNowPlaying(d, source, season, episode) {
 
 async function renderSearch(q, category) {
   stopPlayPoll();
+  hideHero();
   category = category || "all";
   // Empty query: show a prompt and focus the search box; no API call.
   if (!q) {
@@ -1122,13 +1263,16 @@ function renderSearchGrid(q, res, category) {
   const tabs = el("div", "cat-tabs");
   for (const [val, label] of [["all", "All"], ["movie", "Movies"], ["tv", "TV"]]) {
     const t = el("button", "cat-tab" + (val === category ? " active" : ""), label);
-    t.addEventListener("click", () => renderSearchGrid(q, res, val));
+    t.addEventListener("click", () => {
+      history.replaceState({ view: "search", params: { query: q, category: val }, scroll: 0 }, "", "");
+      renderSearchGrid(q, res, val);
+    });
     tabs.appendChild(t);
   }
   app.appendChild(tabs);
   let items = [];
-  if (category !== "movie") items = items.concat(res.movie || []);
-  if (category !== "tv") items = items.concat(res.tv || []);
+  if (category === "all" || category === "movie") items = items.concat((res.movie || []).map(m => ({...m, type: "movie"})));
+  if (category === "all" || category === "tv") items = items.concat((res.tv || []).map(t => ({...t, type: "tv"})));
   if (!items.length) { app.appendChild(el("p", "muted", `No results for "${q}".`)); return; }
   const grid = el("div", "grid");
   for (const it of items) grid.appendChild(makeCard(it));
@@ -1220,7 +1364,7 @@ function buildFocusMap() {
   focusRow = 0;
   focusCol = 0;
   if (restore) setFocus(restore[0], restore[1]);
-  else setFocus(top.length, 0); // default focus: first card row
+  else setFocus(0, 0); // default focus: tabs at the top
 }
 
 function setFocus(row, col) {
@@ -1234,11 +1378,54 @@ function setFocus(row, col) {
     el.classList.add("focused");
     if (el.tagName === "INPUT") el.focus(); // real focus so the search bar accepts typing
     el.scrollIntoView({ block: "nearest", inline: "nearest" });
+    // Scroll so the row's header sits just below the hero banner. This keeps
+    // the category name in view as you navigate through rows, and prevents the
+    // hero from clipping the top of the cards.
+    const row = el.closest(".row");
+    const epGrid = el.closest(".ep-grid");
+    const heroH = (heroEl && heroEl.style.display !== "none" && !heroEl.classList.contains("full")) ? heroEl.offsetHeight : 0;
+    if (heroH || epGrid) {
+      if (row) {
+        const header = row.querySelector("h2");
+        if (header) {
+          window.scrollBy(0, header.getBoundingClientRect().top - heroH);
+        }
+      } else if (epGrid) {
+        // Episode grid: scroll so the picker row sits just below the topbar.
+        // Use absolute scrollTo (not relative scrollBy) so the result is
+        // exact regardless of where scrollIntoView left the page.
+        const picker = epGrid.closest(".detail")?.querySelector(".ep-picker");
+        if (picker) {
+          const topbar = document.querySelector(".topbar");
+          const top = (topbar ? topbar.offsetHeight : 0) + 40;
+          const pickerPageY = picker.getBoundingClientRect().top + window.scrollY;
+          window.scrollTo(0, pickerPageY - top);
+        }
+      } else {
+        // No row (tabs, etc.): scroll so the element sits just below the hero.
+        window.scrollBy(0, el.getBoundingClientRect().top - heroH - 8);
+      }
+    }
+    // If the card's bottom is still cut off at the page edge, scroll down.
+    const rect = el.getBoundingClientRect();
+    if (rect.bottom > window.innerHeight) {
+      window.scrollBy(0, rect.bottom - window.innerHeight);
+    }
+    if (el._item) showBackdrop(el._item); // update the hero backdrop to match focus
   }
   return el;
 }
 
 function currentFocus() { return (focusRows[focusRow] || [])[focusCol] || null; }
+
+// Move focus to a card when the mouse hovers it, so keyboard nav picks up
+// from there. Looks the card up in the focus map and calls setFocus.
+function focusFromHover(cardEl) {
+  for (let r = 0; r < focusRows.length; r++) {
+    const c = focusRows[r].indexOf(cardEl);
+    if (c !== -1) { setFocus(r, c); return; }
+  }
+}
 
 function activate() { const el = currentFocus(); if (el) el.click(); }
 
@@ -1263,6 +1450,8 @@ function stepSelect(el, delta) {
 
 /* Settings: Trakt sign-in (device flow) + sync */
 async function renderSettings() {
+  stopPlayPoll();
+  hideHero();
   const app = document.getElementById("app");
   app.innerHTML =
     '<div class="settings"><h1>Settings</h1>' +
@@ -1418,7 +1607,9 @@ document.addEventListener("click", (e) => {
 });
 
 // Rebuild the focus map whenever the app DOM changes (after each render).
-new MutationObserver(() => buildFocusMap()).observe(app, { childList: true, subtree: true });
+new MutationObserver(() => {
+  buildFocusMap();
+}).observe(app, { childList: true, subtree: true });
 
 // ---- startup grace ----
 // The desktop webview loads before the sidecar binds :8790, so poll /health

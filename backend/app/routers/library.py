@@ -107,6 +107,30 @@ async def watch_progress(request: Request, tmdb_id: int,
     }
 
 
+@router.get("/progress/{tmdb_id}/season/{season}")
+async def watch_season_progress(request: Request, tmdb_id: int, season: int):
+    """All episodes' progress for a season: {episode: {completed, position_ms, duration_ms}}."""
+    conn = sqlite3.connect(request.app.state.db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT episode, position_ms, duration_ms, completed "
+            "FROM watch_progress WHERE title_id = ? AND season = ? "
+            "AND episode IS NOT NULL",
+            (tmdb_id, season),
+        ).fetchall()
+    finally:
+        conn.close()
+    result = {}
+    for r in rows:
+        result[r["episode"]] = {
+            "completed": bool(r["completed"]),
+            "position_ms": r["position_ms"],
+            "duration_ms": r["duration_ms"],
+        }
+    return result
+
+
 class CompleteRequest(BaseModel):
     title_id: int
     season: int | None = None

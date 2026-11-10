@@ -19,10 +19,16 @@ def get_tmdb_client(request: Request) -> TmdbClient:
     return request.app.state.tmdb_client
 
 
+MIN_POPULARITY = 1.0
+
+
 @router.get("/search")
 async def search(request: Request, q: str = Query(..., min_length=1)):
     client = get_tmdb_client(request)
-    return await client.search(q)
+    data = await client.search(q)
+    data["movie"] = [m for m in data.get("movie", []) if m.get("popularity", 0) >= MIN_POPULARITY]
+    data["tv"] = [t for t in data.get("tv", []) if t.get("popularity", 0) >= MIN_POPULARITY]
+    return data
 
 
 @router.get("/home")
