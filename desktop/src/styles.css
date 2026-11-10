@@ -131,7 +131,7 @@ main { padding: 8px 28px 48px; }
 .progress > i { display: block; height: 100%; background: var(--accent); }
 
 /* detail view */
-.detail { padding-top: 16px; max-width: 1400px; margin: 0 auto; }
+.detail { padding: 16px 16px 32px; }
 .detail-top { display: flex; gap: 28px; align-items: flex-start; }
 .detail .poster { width: 280px; border-radius: 12px; object-fit: cover; flex: 0 0 auto; }
 .detail .info { flex: 1; }
@@ -158,10 +158,13 @@ main { padding: 8px 28px 48px; }
 .ep-picker { margin: 18px 0 14px; }
 .ep-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  grid-template-columns: repeat(4, 1fr);
   gap: 18px;
   margin-top: 20px;
 }
+@media (max-width: 1400px) { .ep-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 1000px) { .ep-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 640px)  { .ep-grid { grid-template-columns: 1fr; } }
 .ep-card {
   background: var(--panel);
   border-radius: 12px;
@@ -173,7 +176,7 @@ main { padding: 8px 28px 48px; }
 .ep-card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .ep-card .ep-still {
   width: 100%;
-  aspect-ratio: 16 / 9;
+  aspect-ratio: 4 / 3;
   object-fit: cover;
   display: block;
   background: #101015;

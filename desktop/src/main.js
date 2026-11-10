@@ -511,7 +511,7 @@ function renderDetail(d, currentEp) {
   info.appendChild(el("div", "meta", [year, genres, `\u2605 ${d.vote_average ?? "\u2014"}`].filter(Boolean).join("   ")));
   info.appendChild(el("div", "overview", d.overview || ""));
 
-  let seasonSel = null, episodeSel = null, selectedEp = 1;
+  let seasonSel = null, episodeSel = null, selectedEp = 1, curSeason = 1, curEp = 1;
   if (d._type === "tv" && Array.isArray(d.seasons) && d.seasons.length) {
     // Proxy so the downstream play/prefetch/mark-watched code that reads
     // episodeSel.value keeps working; the episode grid is the real selector.
@@ -569,7 +569,7 @@ function renderDetail(d, currentEp) {
         body.appendChild(el("div", "ep-name", `E${ep.episode_number} \u00b7 ${ep.name || "Untitled"}`));
         if (ep.overview) body.appendChild(el("div", "ep-overview", ep.overview));
         card.appendChild(body);
-        card.addEventListener("click", () => { setEp(ep.episode_number); schedulePrefetch(d, seasonSel, episodeSel); });
+        card.addEventListener("click", () => { setEp(ep.episode_number); startPlayback(d, btn, seasonSel, episodeSel); });
         grid.appendChild(card);
       }
       // Default to the user's current episode if it's in this season, else E1.
@@ -578,14 +578,19 @@ function renderDetail(d, currentEp) {
     };
 
     seasonSel.addEventListener("change", () => renderEpisodes(Number(seasonSel.value)));
-    // Default season: the user's current episode's season if listed, else first.
-    let defSeason = d.seasons.find((s) => s.season_number !== 0).season_number;
-    if (currentEp && d.seasons.some((x) => x.season_number === currentEp.season)) defSeason = currentEp.season;
-    seasonSel.value = String(defSeason);
-    renderEpisodes(defSeason);
+    // Default to the user's current season/episode if listed, else S1E1.
+    curSeason = d.seasons.find((s) => s.season_number !== 0).season_number;
+    curEp = 1;
+    if (currentEp && d.seasons.some((x) => x.season_number === currentEp.season)) {
+      curSeason = currentEp.season;
+      curEp = (currentEp.episode && currentEp.episode >= 1) ? currentEp.episode : 1;
+    }
+    seasonSel.value = String(curSeason);
+    renderEpisodes(curSeason);
   }
 
-  const btn = el("button", "btn", "Play");
+  const playLabel = (d._type === "tv" && seasonSel) ? `Play S${curSeason} E${curEp}` : "Play";
+  const btn = el("button", "btn", playLabel);
   btn.addEventListener("click", () => startPlayback(d, btn, seasonSel, episodeSel));
   info.appendChild(btn);
 
