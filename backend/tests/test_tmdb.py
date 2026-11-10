@@ -23,8 +23,10 @@ from app.routers.tmdb import router as tmdb_router
 MOCK_TOKEN = "test_bearer_token"
 
 # Standard mock payloads
-SEARCH_MOVIE = {"results": [{"id": 1, "title": "Movie A"}]}
-SEARCH_TV = {"results": [{"id": 2, "title": "Show B"}]}
+# popularity is set >= MIN_POPULARITY (1.0) so /tmdb/search's popularity filter
+# keeps them (real TMDB search results always carry a popularity field).
+SEARCH_MOVIE = {"results": [{"id": 1, "title": "Movie A", "popularity": 5.0}]}
+SEARCH_TV = {"results": [{"id": 2, "title": "Show B", "popularity": 5.0}]}
 TRENDING = {"results": [{"id": 10, "title": "Trending"}]}
 GENRE_MOVIE = {"genres": [{"id": 1, "name": "Drama"}]}
 GENRE_TV = {"genres": [{"id": 2, "name": "Comedy"}]}
