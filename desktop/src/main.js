@@ -560,7 +560,7 @@ function renderDetail(d, currentEp) {
         const img = el("img", "ep-still");
         if (ep.still_path) {
           img.src = API + "/tmdb/image?path=" + encodeURIComponent(ep.still_path)
-            + "&key=" + encodeURIComponent(key) + "&size=w300";
+            + "&key=" + encodeURIComponent(key) + "&size=w500";
         } else {
           card.classList.add("no-still");
         }

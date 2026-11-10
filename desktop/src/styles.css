@@ -176,7 +176,7 @@ main { padding: 8px 28px 48px; }
 .ep-card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .ep-card .ep-still {
   width: 100%;
-  aspect-ratio: 4 / 3;
+  aspect-ratio: 16 / 9;
   object-fit: cover;
   display: block;
   background: #101015;

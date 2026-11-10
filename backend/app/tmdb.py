@@ -297,7 +297,8 @@ class TmdbClient:
         if not path:
             return None
         ext = Path(path).suffix or ".jpg"
-        dest = (self._poster_dir / f"{key}{ext}") if self._poster_dir else None
+        # Size is part of the filename so a w300 cache never serves a w500 request.
+        dest = (self._poster_dir / f"{key}-{size}{ext}") if self._poster_dir else None
         if dest is None:
             return None
         if dest.exists():
