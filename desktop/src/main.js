@@ -574,18 +574,19 @@ function renderDetail(d, currentEp) {
   info.appendChild(el("div", "overview", d.overview || ""));
 
   let seasonSel = null, episodeSel = null, selectedEp = 1, curSeason = 1, curEp = 1;
+  let picker = null, pickerActiveEl = null, seasonBtn = null, grid = null;
   if (d._type === "tv" && Array.isArray(d.seasons) && d.seasons.length) {
     // Proxies so the downstream play/prefetch/mark-watched code that reads
     // *.value keeps working; the episode grid and the season dropdown are the
     // real selectors (they mutate selectedEp / curSeason).
     episodeSel = { get value() { return String(selectedEp); } };
     seasonSel = { get value() { return String(curSeason); } };
-    const picker = el("div", "ep-picker");
+    picker = el("div", "ep-picker");
     // Custom season dropdown. A native <select> traps the arrow keys (focusing
     // it and pressing up/down changes the season, so you can never reach the
     // episodes). This is a button you "enter" with Enter/Space; only while the
     // list is open do the arrows do anything.
-    const seasonBtn = el("button", "season-btn", `Season ${curSeason}`);
+    seasonBtn = el("button", "season-btn", `Season ${curSeason}`);
     seasonBtn.setAttribute("aria-haspopup", "listbox");
     seasonBtn.setAttribute("aria-expanded", "false");
     const seasonList = el("div", "season-list");
@@ -603,7 +604,7 @@ function renderDetail(d, currentEp) {
     picker.appendChild(seasonBtn);
     picker.appendChild(seasonList);
     wrap.appendChild(picker);
-    const grid = el("div", "ep-grid");
+    grid = el("div", "ep-grid");
     wrap.appendChild(grid);
 
     const setEp = (n) => {
@@ -644,8 +645,8 @@ function renderDetail(d, currentEp) {
       // row. The column count comes from the live grid so it tracks the
       // responsive breakpoints (4/3/2/1).
       const cols = (getComputedStyle(grid).gridTemplateColumns || "").split(" ").filter(Boolean).length || 1;
-      // Up from the top row escapes to the season selector above the grid.
-      if (e.key === "ArrowUp" && i < cols) { seasonBtn.focus(); return; }
+      // Up from the top row returns to the picker row (the control last used).
+      if (e.key === "ArrowUp" && i < cols) { (pickerActiveEl || seasonBtn).focus(); return; }
       let next;
       if (e.key === "ArrowRight") next = Math.min(i + 1, cards.length - 1);
       else if (e.key === "ArrowLeft") next = Math.max(i - 1, 0);
@@ -717,20 +718,14 @@ function renderDetail(d, currentEp) {
       renderEpisodes(n);
     };
     seasonBtn.addEventListener("keydown", (e) => {
-      if (["Enter", " ", "Spacebar", "Escape", "ArrowDown", "ArrowUp"].includes(e.key)) e.stopPropagation();
+      // Only the dropdown keys are handled here; Left/Right/Down/Up are handled
+      // by the picker-row handler (the season selector is part of that row).
+      if (["Enter", " ", "Spacebar", "Escape"].includes(e.key)) e.stopPropagation();
       if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
         e.preventDefault();
         openSeasons();
       } else if (e.key === "Escape") {
         closeSeasons();
-      } else if (e.key === "ArrowDown" && !seasonList.classList.contains("open")) {
-        // Down from the season selector enters the episode grid.
-        e.preventDefault();
-        const cards = [...grid.querySelectorAll(".ep-card")];
-        if (cards.length) cards[0].focus();
-      } else if (e.key === "ArrowUp") {
-        // The season selector is the top of the view; Up does nothing.
-        e.preventDefault();
       }
     });
     seasonBtn.addEventListener("click", () => {
@@ -765,34 +760,58 @@ function renderDetail(d, currentEp) {
   const playLabel = (d._type === "tv" && seasonSel) ? `Play S${curSeason} E${curEp}` : "Play";
   const btn = el("button", "btn", playLabel);
   btn.addEventListener("click", () => startPlayback(d, btn, seasonSel, episodeSel));
-  // On TV, keep keyboard focus in the episode list (the cards are the real
-  // selectors). Play leaves the Tab order so navigation never lands on it; it
-  // stays mouse-reachable.
-  if (d._type === "tv") btn.tabIndex = -1;
-  info.appendChild(btn);
 
   // Mark-as-watched controls (manual). A movie marks the title; a show marks
   // the selected episode, or the whole season.
   const actionRow = el("div", "btn-row");
+  let epBtn = null, markSeasonBtn = null;
   if (d._type === "tv") {
-    const epBtn = el("button", "btn btn-ghost", "Mark episode watched");
-    epBtn.tabIndex = -1; // keep keyboard focus in the episode list
+    epBtn = el("button", "btn btn-ghost", "Mark episode watched");
     epBtn.addEventListener("click", () => markComplete(
       d, Number(seasonSel.value), Number(episodeSel.value), false, epBtn));
-    const seasonBtn = el("button", "btn btn-ghost", "Mark season watched");
-    seasonBtn.tabIndex = -1; // keep keyboard focus in the episode list
+    markSeasonBtn = el("button", "btn btn-ghost", "Mark season watched");
     const cnt = d.seasons.find((s) => s.season_number === Number(seasonSel.value));
-    seasonBtn.addEventListener("click", () => markComplete(
-      d, Number(seasonSel.value), Number(episodeSel.value), true, seasonBtn,
+    markSeasonBtn.addEventListener("click", () => markComplete(
+      d, Number(seasonSel.value), Number(episodeSel.value), true, markSeasonBtn,
       cnt ? cnt.episode_count || 1 : 1));
     actionRow.appendChild(epBtn);
-    actionRow.appendChild(seasonBtn);
+    actionRow.appendChild(markSeasonBtn);
   } else {
     const mBtn = el("button", "btn btn-ghost", "Mark as watched");
     mBtn.addEventListener("click", () => markComplete(d, null, null, false, mBtn));
     actionRow.appendChild(mBtn);
   }
-  info.appendChild(actionRow);
+
+  // On TV the Play + mark-watched controls sit in the picker row (next to the
+  // season selector) so they share one keyboard flow with the episode grid:
+  // Left/Right move across the row, Down enters the grid, Enter/Space activates.
+  // Movies keep them in the info panel.
+  if (d._type === "tv") {
+    picker.appendChild(btn);
+    picker.appendChild(actionRow);
+    const rowBtns = [seasonBtn, btn, epBtn, markSeasonBtn];
+    pickerActiveEl = seasonBtn;
+    rowBtns.forEach((b) => b.addEventListener("focus", () => { pickerActiveEl = b; }));
+    picker.addEventListener("keydown", (e) => {
+      if (["ArrowLeft", "ArrowRight", "ArrowDown", "ArrowUp", "Enter", " ", "Spacebar"].includes(e.key)) {
+        e.stopPropagation();
+      }
+      const idx = rowBtns.indexOf(document.activeElement);
+      if (e.key === "ArrowRight") { e.preventDefault(); const n = rowBtns[Math.min(idx + 1, rowBtns.length - 1)]; if (n) n.focus(); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); const n = rowBtns[Math.max(idx - 1, 0)]; if (n) n.focus(); }
+      else if (e.key === "ArrowDown") { e.preventDefault(); const cards = [...grid.querySelectorAll(".ep-card")]; if (cards.length) cards[0].focus(); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); }
+      else if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
+        const a = document.activeElement;
+        // The season selector opens its dropdown via its own handler
+        // (stopPropagation); the plain buttons activate here.
+        if (a && a !== seasonBtn && a.tagName === "BUTTON") { e.preventDefault(); a.click(); }
+      }
+    });
+  } else {
+    info.appendChild(btn);
+    info.appendChild(actionRow);
+  }
 
   top.appendChild(info);
   app.appendChild(wrap);

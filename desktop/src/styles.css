@@ -156,7 +156,9 @@ main { padding: 8px 28px 48px; }
 .ep-row .btn { margin-top: 0; padding: 8px 18px; font-size: 13px; }
 
 /* TV season: episode card grid (Amazon-Prime style) */
-.ep-picker { margin: 18px 0 14px; position: relative; display: inline-block; }
+.ep-picker { margin: 18px 0 14px; position: relative; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ep-picker .btn { margin-top: 0; }
+.ep-picker .btn-row { margin-top: 0; }
 .season-btn {
   background: var(--panel);
   color: #eee;
