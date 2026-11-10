@@ -145,6 +145,19 @@ Full design: PLAN.md. This file tracks multi-session progress.
   spawn (dual-path resource_dir) + kill-on-close present; frontend
   startup-grace (poll /health 750ms, 20s timeout, Starting/Retry) present.
   Remaining: clean-machine installer run (needs the user - handoff below).
+- (2026-11-10) Fixed a windowed-build crash the local dev/test path never hit:
+  on a clean machine the frozen one-dir exe (console=False) crashed at boot
+  with `AttributeError: 'NoneType' object has no attribute 'isatty'` ->
+  `ValueError: Unable to configure formatter 'default'`. Root cause: a windowed
+  PyInstaller build leaves sys.stdout/sys.stderr as None, and uvicorn's default
+  logging formatter calls .isatty() on them during configure_logging. The prior
+  local verification ran the dev venv python (sys.stdout set), so it masked the
+  bug. Fix: guard sys.stdout/sys.stderr -> os.devnull before `import uvicorn` in
+  backend/server.py (no-op in console/dev mode). Rebuilt the one-dir backend +
+  Tauri MSI+NSIS from current sources and verified the frozen windowed exe
+  itself now boots: binds :8790, /health -> ok, /library -> {"titles":[]}. The
+  clean-machine handoff below now applies to these fresh installers (NSIS/MSI
+  Nov 10 14:10; sidecar byte-matched to the fixed exe).
 
 ## Clean-machine handoff (the one thing that can't be done here)
 Copy one installer to a fresh Windows box (no prior Home Media install, no
