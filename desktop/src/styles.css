@@ -162,16 +162,17 @@ main { padding: 8px 28px 48px; }
 .season-btn {
   display: inline-flex;
   align-items: center;
-  gap: 9px;
+  gap: 10px;
   background: var(--panel);
   color: var(--text);
   border: 1px solid #2a2a35;
   border-radius: 999px;
-  padding: 8px 16px 8px 18px;
-  font-size: 14px;
+  padding: 10px 20px 10px 22px;
+  font-size: 15px;
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
+  margin-right: 8px; /* room so the Play button isn't glued to it */
   transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
 }
 .season-btn::after {

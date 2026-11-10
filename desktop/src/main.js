@@ -1176,7 +1176,9 @@ function buildFocusMap() {
   const top = [];
   const tabs = [...app.querySelectorAll(".cat-tab")];
   if (tabs.length) top.push(tabs);
-  focusRows = top.concat(rows).concat([...byRow.values()]);
+  // Drop empty rows so Up from the first populated row reaches the tabs (an
+  // empty "Continue Watching" row used to swallow the keypress).
+  focusRows = top.concat(rows).concat([...byRow.values()]).filter((r) => r.length > 0);
   focusRow = 0;
   focusCol = 0;
   setFocus(top.length, 0); // default focus: first card row
