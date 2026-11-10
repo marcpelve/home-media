@@ -1171,17 +1171,15 @@ function buildFocusMap() {
     if (!byRow.has(rowEl)) byRow.set(rowEl, []);
     byRow.get(rowEl).push(e);
   }
-  // Top controls (search bar + category tabs) lead the map so Up from the top
-  // card row reaches them, then Down enters the grid.
+  // Category tabs lead the map so Up from the top card row reaches them, then
+  // Down enters the grid. (The search bar stays reachable via "/" only.)
   const top = [];
-  const search = document.getElementById("search");
-  if (search) top.push([search]);
   const tabs = [...app.querySelectorAll(".cat-tab")];
   if (tabs.length) top.push(tabs);
   focusRows = top.concat(rows).concat([...byRow.values()]);
   focusRow = 0;
   focusCol = 0;
-  setFocus(top.length, 0); // default focus: first card row, not the search bar
+  setFocus(top.length, 0); // default focus: first card row
 }
 
 function setFocus(row, col) {
