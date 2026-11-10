@@ -175,7 +175,7 @@ main { padding: 8px 28px 48px; }
   position: absolute;
   top: calc(100% + 4px);
   left: 0;
-  min-width: 100%;
+  min-width: 120px;
   background: var(--panel);
   border: 1px solid #2a2a35;
   border-radius: 8px;
