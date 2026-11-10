@@ -7,6 +7,7 @@ const searchInput = document.getElementById("search");
 
 let playPollTimer = null;
 let nowPlaying = null; // { id, season, episode } of the current playback
+let homeStash = null; // detached live home DOM while we're away from home
 
 async function api(path, opts) {
   const res = await fetch(API + path, opts);
@@ -155,6 +156,24 @@ function renderView(view, params) {
 }
 
 function navPush(view, params) {
+  if (view === "home") { renderHome(params && params.category); updateBackButton(); return; }
+  // Leaving home: stash the live home DOM so "back" restores it exactly -
+  // scroll, active tab, and focused card all preserved, no re-fetch.
+  if (history.state && history.state.view === "home") {
+    // Capture scroll + focus BEFORE detaching the DOM - detaching collapses the
+    // page to height 0, which would reset scrollY to 0 and blur the focus.
+    const fe = document.activeElement;
+    const savedScroll = window.scrollY;
+    const savedFocus = (fe && fe.dataset && fe.dataset.id) ? fe.dataset.id : null;
+    homeStash = document.createElement("div");
+    while (app.firstChild) homeStash.appendChild(app.firstChild);
+    history.replaceState({
+      view: "home",
+      params: { category: (history.state.params && history.state.params.category) || "all" },
+      scroll: savedScroll,
+      focus: savedFocus,
+    }, "", "");
+  }
   history.pushState({ view, params, scroll: window.scrollY }, "", "");
   renderView(view, params);
   updateBackButton();
@@ -177,9 +196,27 @@ function navHome() {
 
 window.addEventListener("popstate", (e) => {
   const s = e.state;
-  if (!s || s.view === "home") renderHome();
-  else renderView(s.view, s.params);
-  requestAnimationFrame(() => window.scrollTo(0, (s && s.scroll) || 0));
+  if (!s || s.view === "home") {
+    if (homeStash && homeStash.childNodes.length) {
+      // Restore the exact home DOM (no re-fetch): scroll, tab, and focus are
+      // preserved because the same nodes come back.
+      app.innerHTML = "";
+      while (homeStash.firstChild) app.appendChild(homeStash.firstChild);
+      homeStash = null;
+      setTimeout(() => {
+        window.scrollTo(0, (s && s.scroll) || 0);
+        if (s && s.focus) {
+          const fe = document.querySelector('.card[data-id="' + s.focus + '"]');
+          if (fe) fe.focus();
+        }
+      }, 0);
+    } else {
+      renderHome(s && s.params && s.params.category);
+    }
+  } else {
+    renderView(s.view, s.params);
+    setTimeout(() => window.scrollTo(0, (s && s.scroll) || 0), 0);
+  }
   updateBackButton();
 });
 
@@ -221,6 +258,7 @@ function exitAndSync() {
 
 function makeCard(item, { withProgress = false } = {}) {
   const card = el("div", "card");
+  card.dataset.id = item.id; // stable id so "back" can restore focus to this card
   const img = el("img", "poster");
   img.loading = "lazy";
   img.alt = item.title || item.name || "";
@@ -242,7 +280,15 @@ function makeCard(item, { withProgress = false } = {}) {
     meta.appendChild(progress);
   }
   card.appendChild(meta);
+  card.tabIndex = 0; // focusable so "back" can restore focus here
+  card.setAttribute("role", "button");
   card.addEventListener("click", () => navPush("detail", { id: item.id, type: item.type }));
+  card.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
+      e.preventDefault();
+      navPush("detail", { id: item.id, type: item.type });
+    }
+  });
   return card;
 }
 
@@ -343,7 +389,23 @@ function renderHomeRows(rows, category, allRejected) {
     }
     app.appendChild(box);
   }
-  window.scrollTo(0, 0);
+  // Restore the exact home state (scroll + focused card) if this history entry
+  // carries one - this is what makes "back" return to exactly where you were.
+  // The page can still grow as lazy posters land, so an early scrollTo gets
+  // clamped; keep retrying (over a short window) until we actually reach the
+  // target, then stop so we never fight a user who has started scrolling.
+  const st = history.state;
+  if (st && (st.scroll || st.focus)) {
+    const target = st.scroll || 0;
+    const fid = st.focus || null;
+    let tries = 0;
+    const restore = () => {
+      window.scrollTo(0, target);
+      if (fid) { const fe = document.querySelector('.card[data-id="' + fid + '"]'); if (fe) fe.focus(); }
+      if (Math.abs(window.scrollY - target) > 4 && ++tries < 150) setTimeout(restore, 16);
+    };
+    setTimeout(restore, 16);
+  }
 }
 
 async function renderHome(category) {
@@ -573,8 +635,16 @@ function renderDetail(d, currentEp) {
       const cards = [...grid.querySelectorAll(".ep-card")];
       const i = cards.indexOf(document.activeElement);
       if (i === -1) { cards[0].focus(); return; }
-      const step = (e.key === "ArrowRight" || e.key === "ArrowDown") ? 1 : -1;
-      (cards[i + step] || cards[0]).focus();
+      // Down/Up move a full column (next/prev row); Left/Right move within a
+      // row. The column count comes from the live grid so it tracks the
+      // responsive breakpoints (4/3/2/1).
+      const cols = (getComputedStyle(grid).gridTemplateColumns || "").split(" ").filter(Boolean).length || 1;
+      let next;
+      if (e.key === "ArrowRight") next = Math.min(i + 1, cards.length - 1);
+      else if (e.key === "ArrowLeft") next = Math.max(i - 1, 0);
+      else if (e.key === "ArrowDown") next = Math.min(i + cols, cards.length - 1);
+      else next = Math.max(i - cols, 0);
+      cards[next].focus();
     });
 
     // Fetch a season's episodes and render them as cards (still, title,
@@ -678,6 +748,10 @@ function renderDetail(d, currentEp) {
   const playLabel = (d._type === "tv" && seasonSel) ? `Play S${curSeason} E${curEp}` : "Play";
   const btn = el("button", "btn", playLabel);
   btn.addEventListener("click", () => startPlayback(d, btn, seasonSel, episodeSel));
+  // On TV, keep keyboard focus in the episode list (the cards are the real
+  // selectors). Play leaves the Tab order so navigation never lands on it; it
+  // stays mouse-reachable.
+  if (d._type === "tv") btn.tabIndex = -1;
   info.appendChild(btn);
 
   // Mark-as-watched controls (manual). A movie marks the title; a show marks
@@ -685,9 +759,11 @@ function renderDetail(d, currentEp) {
   const actionRow = el("div", "btn-row");
   if (d._type === "tv") {
     const epBtn = el("button", "btn btn-ghost", "Mark episode watched");
+    epBtn.tabIndex = -1; // keep keyboard focus in the episode list
     epBtn.addEventListener("click", () => markComplete(
       d, Number(seasonSel.value), Number(episodeSel.value), false, epBtn));
     const seasonBtn = el("button", "btn btn-ghost", "Mark season watched");
+    seasonBtn.tabIndex = -1; // keep keyboard focus in the episode list
     const cnt = d.seasons.find((s) => s.season_number === Number(seasonSel.value));
     seasonBtn.addEventListener("click", () => markComplete(
       d, Number(seasonSel.value), Number(episodeSel.value), true, seasonBtn,
