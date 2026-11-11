@@ -62,13 +62,20 @@ Design: PLAN.md  ·  Detailed log: STATE.md  ·  This file: live phase progress.
 - [x] 1 new test (124 total pass)
 - [x] Dots slow-blink (2.4s pulse; pauses on hover; reduced-motion safe)
 
-## Next steps (proposed 2026-11-10 — pick one)
+## Next steps (corrected 2026-11-10 — verified against the code)
 
-- [ ] 1. Continue Watching / Recently Added from Trakt (real media-center home)
-- [ ] 2. Source-picker quality preferences (1080p+, DV/HDR sorting)
-- [ ] 3. Kodi-style keyboard focus across remaining views
-- [ ] 4. Download-to-library via Torbox
-- [ ] 5. Fix the opencode version regression (1.18.5 vs 2.2.7)
+- [ ] 1. Clean-machine installer run (needs the user — see STATE.md handoff)
+- [ ] 2. Settings: download-dir / quality-prefs / cache-size controls
+- [ ] 3. Detail view: render TMDB reviews (/tmdb/reviews endpoint exists)
+
+Tabled (pending the user's own testing):
+- [ ] Download-to-library UI (Download button in detail + Downloads screen;
+      backend ready, frontend not wired)
+- [ ] My Library end-to-end testing
+
+Resolved since the prior handoff: source-picker quality sorting (done in
+coco_driver.py: 4K>1080p, DV>HDR>no-HDR, seeders/size, MIN_QUALITY_RANK=1080p)
+and the opencode version regression (binary now reports 2.2.7).
 
 ## Legend
 

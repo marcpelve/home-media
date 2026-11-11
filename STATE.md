@@ -215,28 +215,34 @@ Expected: clean install -> app launches to home -> closing the window kills
 the backend (port 8790 released).
 
 ## Session endpoint (2026-11-10) — pick back up here
-State: clean working tree. All servers spun down (8790/8791/8795/8796);
-unauthed test stack torn down; scratch dir removed. 124/124 backend tests
-pass. dist/ synced with src/ as of 77d0064.
+State: clean working tree. All servers spun down; unauthed test stack torn
+down; scratch dir removed. 124/124 backend tests pass. dist/ synced with
+src/ as of 77d0064.
 
 Recent commits (branch trakt): a180bec (TMDB/Torbox in-app auth),
 b38244f (hover/scroll pointer-moved guard — cleanly revertable),
 24f971a (service health UI: 503 + top-bar dots + home note),
-77d0064 (dots slow-blink).
+77d0064 (dots slow-blink), 6af3dbb (handoff docs).
 
-Phase status: P6 frontend done (E2E playback still needs a real Torbox
-key to exercise resolve); P7 packaging done pending the clean-machine
+Phase status: P0-P6 done; P7 packaging done pending the clean-machine
 installer run (handoff above).
 
-Next-step options proposed to the user (pick one to start):
-1. Continue Watching / Recently Added from Trakt — a real media-center home.
-2. Source-picker quality preferences — filter/sort debrid releases
-   (1080p+, Dolby Vision/HDR) to surface the best release first.
-3. Kodi-style keyboard focus, finished across views (home, library, search,
-   source picker).
-4. Download-to-library via Torbox — grab a release locally, not just stream.
-5. Tooling: opencode regression (reports 1.18.5 despite 2.2.7 installed) —
-   unresolved; it is the default coding delegate.
+Next steps (corrected 2026-11-10 — verified against the code):
+1. Clean-machine installer run (needs the user) — see the handoff above.
+2. Settings: download-dir / quality-prefs / cache-size controls.
+3. Detail view: render TMDB reviews (the /tmdb/reviews endpoint exists).
+
+Tabled (pending the user's own testing):
+- Download-to-library UI — Download button in the detail view + a Downloads
+  screen (progress / cancel / open-folder). Backend is ready
+  (POST/GET/DELETE /downloads); the frontend is not wired yet.
+- My Library end-to-end testing.
+
+Resolved since the prior handoff:
+- Source-picker quality sorting: done in coco_driver.py (quality desc
+  4K>1080p, then Dolby Vision > HDR > no-HDR, then seeders/size;
+  MIN_QUALITY_RANK=1080p drops sub-1080p).
+- opencode version regression: gone — the installed binary reports 2.2.7.
 
 ## Decisions
 - TMDB auth: v4 Read Access Token via `Authorization: *** header (not the v3
