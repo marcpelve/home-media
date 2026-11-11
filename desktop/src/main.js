@@ -1580,6 +1580,8 @@ async function renderSettings() {
     '<section class="trakt-panel" id="tmdb-panel"><h2>TMDB</h2>' +
     '<p class="muted">Loading&hellip;</p></section>' +
     '<section class="trakt-panel" id="torbox-panel"><h2>Torbox</h2>' +
+    '<p class="muted">Loading&hellip;</p></section>' +
+    '<section class="trakt-panel" id="cache-panel"><h2>Cache</h2>' +
     '<p class="muted">Loading&hellip;</p></section></div>';
   await Promise.all([loadTraktStatus(), loadTmdbStatus(), loadTorboxStatus(), loadCacheStatus()]);
   refreshSvcStatus();
