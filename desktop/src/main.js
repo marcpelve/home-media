@@ -1816,9 +1816,61 @@ async function renderSettings() {
     '<section class="trakt-panel" id="torbox-panel"><h2>Torbox</h2>' +
     '<p class="muted">Loading&hellip;</p></section>' +
     '<section class="trakt-panel" id="cache-panel"><h2>Cache</h2>' +
+    '<p class="muted">Loading&hellip;</p></section>' +
+    '<section class="trakt-panel" id="updates-panel"><h2>Updates</h2>' +
     '<p class="muted">Loading&hellip;</p></section></div>';
-  await Promise.all([loadTraktStatus(), loadTmdbStatus(), loadTorboxStatus(), loadCacheStatus()]);
+  await Promise.all([loadTraktStatus(), loadTmdbStatus(), loadTorboxStatus(), loadCacheStatus(), loadUpdatesStatus()]);
   refreshSvcStatus();
+}
+
+/* Settings: app updates (Tauri updater via GitHub Releases). */
+async function loadUpdatesStatus() {
+  const panel = document.getElementById("updates-panel");
+  if (!panel) return;
+  const tauri = window.__TAURI__;
+  if (!tauri || !tauri.core) {
+    panel.innerHTML = '<h2>Updates</h2><p class="muted">Not available in this build.</p>';
+    return;
+  }
+  let current = "";
+  try { current = await tauri.app.version(); } catch (_) { current = ""; }
+  panel.innerHTML =
+    '<h2>Updates</h2>' +
+    '<p class="muted">Current version: ' + (current ? esc(current) : "unknown") + '</p>' +
+    '<button class="btn" id="upd-check">Check for updates</button>' +
+    '<p class="muted" id="upd-status"></p>' +
+    '<button class="btn" id="upd-install" style="display:none">Install update &amp; restart</button>';
+  panel.querySelector("#upd-check").addEventListener("click", () => checkForUpdate(panel));
+}
+
+async function checkForUpdate(panel) {
+  const status = panel.querySelector("#upd-status");
+  const installBtn = panel.querySelector("#upd-install");
+  const tauri = window.__TAURI__;
+  status.textContent = "Checking for updates\u2026";
+  installBtn.style.display = "none";
+  try {
+    const update = await tauri.core.invoke("check_for_update");
+    if (!update) {
+      status.textContent = "You're up to date.";
+      return;
+    }
+    status.textContent = "Update available: v" + update.version;
+    installBtn.style.display = "";
+    installBtn.onclick = async () => {
+      installBtn.disabled = true;
+      status.textContent = "Downloading and installing\u2026";
+      try {
+        await tauri.core.invoke("install_update");
+        status.textContent = "Installed \u2014 restarting\u2026";
+      } catch (e) {
+        status.textContent = "Update failed: " + e;
+        installBtn.disabled = false;
+      }
+    };
+  } catch (e) {
+    status.textContent = "Check failed: " + e;
+  }
 }
 
 /* Settings: poster cache size readout + clear (GET /config, POST /config/clear-cache). */

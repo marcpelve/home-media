@@ -24,13 +24,26 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis"],
     "resources": [
       "resources/home-media"
     ],
     "icon": [
       "icons/icon.ico",
       "icons/icon.png"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "perMachine"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/USERNAME/home-media-trakt/releases/latest/download/{filename}"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkzNTJDRTczQTE0QjEyRTEKUldUaEVrdWhjODVTazJBNWh4OEFaUVlmRkQzMUpYMysydW5HREJYaEQ1eGZONVd5V1B2d01Fb2EK"
+    }
   }
 }

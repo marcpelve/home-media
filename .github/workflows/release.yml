@@ -1,0 +1,79 @@
+# Home Media — build, sign, and publish a release.
+#
+# Triggered by pushing a semver tag (e.g. `v1.2.3`). The tag name becomes the
+# GitHub Release name, and the Tauri updater manifest is generated from it.
+#
+# Required repo secret (Settings -> Secrets and variables -> Actions):
+#   TAURI_SIGNING_PRIVATE_KEY
+#     The base64-encoded minisign private key (the one printed by
+#     `tauri signer generate`). The matching public key is already embedded in
+#     tauri.conf.json. If the key has a password, also set
+#     TAURI_SIGNING_PRIVATE_KEY_PASSWORD.
+#
+# GITHUB_TOKEN is provided automatically.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build & Release (Windows x64)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Build the FastAPI backend into a PyInstaller one-dir bundle, mirroring
+      # desktop/build-tauri-msvc.bat. The NSIS installer then ships this bundle
+      # as a bundled resource (resources/home-media).
+      - name: Build PyInstaller backend (one-dir)
+        shell: bash
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install pyinstaller
+          pyinstaller backend.spec --noconfirm --distpath dist
+
+      # Stage the one-dir where Tauri expects its bundled resource.
+      - name: Stage backend into Tauri resources
+        shell: bash
+        run: |
+          rm -rf desktop/src-tauri/resources/home-media
+          cp -r backend/dist/home-media desktop/src-tauri/resources/home-media
+
+      # Build the NSIS installer, sign it with the minisign key, and publish
+      # it (plus the .sig and updater manifest) to the GitHub Release.
+      - name: Build, sign, and publish release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.tag_name }}
+          releaseName: ${{ github.tag_name }}
+          releaseBody: |
+            Home Media ${{ github.tag_name }}
+
+            Install the `.exe` (NSIS) for Windows x64. The app updates itself
+            from this release feed — no manual re-download needed.
+          projectName: home-media
+          tauriDir: desktop/src-tauri
+          includeUpdaterManifest: true

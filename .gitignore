@@ -23,6 +23,7 @@ venv/
 # Build / packaging (PyInstaller + Tauri)
 dist/
 build/
+.tauri/
 *.exe
 backend/dist/
 backend/build-console/

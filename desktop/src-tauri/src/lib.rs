@@ -1,10 +1,52 @@
 use std::process::{Child, Command};
 use std::sync::Mutex;
 use tauri::{App, Manager, WindowEvent};
+use tauri_plugin_updater::UpdaterExt;
+
+/// Update info surfaced to the frontend.
+#[derive(serde::Serialize)]
+struct UpdateInfo {
+    version: String,
+    notes: Option<String>,
+}
+
+/// Ask the configured update endpoint(s) whether a newer release is available.
+#[tauri::command]
+async fn check_for_update(app: tauri::AppHandle) -> Result<Option<UpdateInfo>, String> {
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    match updater.check().await.map_err(|e| e.to_string())? {
+        Some(update) => Ok(Some(UpdateInfo {
+            version: update.version,
+            notes: update.body,
+        })),
+        None => Ok(None),
+    }
+}
+
+/// Download and install the latest release, then relaunch.
+#[tauri::command]
+async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    let update = updater
+        .check()
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "No update available".to_string())?;
+    update
+        .download_and_install(
+            |_received: usize, _total: Option<u64>| {},
+            || {},
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
 
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .invoke_handler(tauri::generate_handler![check_for_update, install_update])
         .setup(|app: &mut App| {
             // The backend ships as a PyInstaller one-dir bundle in the app's
             // resources: a home-media/ folder (exe + _internal/), no runtime
