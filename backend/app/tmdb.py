@@ -274,16 +274,28 @@ class TmdbClient:
         )
         return {"movie": movie.get("genres", []), "tv": tv.get("genres", [])}
 
+    async def _details_with_imdb(self, prefix: str, tmdb_id: int) -> dict:
+        """Fetch a detail response and fill in imdb_id.
+
+        The TMDB detail response omits imdb_id, and append_to=external_ids is
+        not reliably populated for tv (it comes back absent), so the id is
+        pulled from the dedicated external_ids endpoint, which is reliable.
+        """
+        data = await self._fetch(f"{prefix}/{tmdb_id}", TTL_DETAILS)
+        if not data.get("imdb_id"):
+            ext = await self._fetch(f"{prefix}/{tmdb_id}/external_ids", TTL_DETAILS)
+            data["imdb_id"] = ext.get("imdb_id")
+        return data
+
     async def title(self, tmdb_id: int) -> dict:
         """Title details; tries movie first, falls back to tv."""
         try:
-            data = await self._fetch(f"movie/{tmdb_id}", TTL_DETAILS)
+            data = await self._details_with_imdb("movie", tmdb_id)
             data["_type"] = "movie"
             return data
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
-                # Base tv responses omit imdb_id; pull it from external_ids.
-                data = await self._fetch(f"tv/{tmdb_id}", TTL_DETAILS, {"append_to": "external_ids"})
+                data = await self._details_with_imdb("tv", tmdb_id)
                 data["_type"] = "tv"
                 return data
             raise
@@ -291,8 +303,7 @@ class TmdbClient:
     async def title_typed(self, tmdb_id: int, media_type: str) -> dict:
         """Title details for a known type - no movie-then-tv fallback."""
         prefix = "tv" if media_type == "tv" else "movie"
-        params = {"append_to": "external_ids"} if prefix == "tv" else None
-        data = await self._fetch(f"{prefix}/{tmdb_id}", TTL_DETAILS, params)
+        data = await self._details_with_imdb(prefix, tmdb_id)
         data["_type"] = prefix
         return data
 

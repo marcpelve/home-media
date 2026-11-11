@@ -20,6 +20,26 @@ async def list_library(request: Request):
     return lib.build_library(request.app.state.db_path)
 
 
+@router.delete("/{tmdb_id}")
+async def delete_library_title(request: Request, tmdb_id: int):
+    """Remove a title from the library (hard delete).
+
+    Cancels any in-progress downloads for it, then deletes its files and
+    rows, so it no longer appears in the library.
+    """
+    mgr = request.app.state.downloads
+    removed = mgr.remove_for_title(tmdb_id)
+    return {"removed": removed}
+
+
+@router.delete("/{tmdb_id}/episodes/{episode}")
+async def delete_library_episode(request: Request, tmdb_id: int, episode: int):
+    """Remove one episode from the library (hard delete)."""
+    mgr = request.app.state.downloads
+    removed = mgr.remove_for_episode(tmdb_id, episode)
+    return {"removed": removed}
+
+
 @router.get("/file")
 async def library_file(
     request: Request, tmdb_id: int, season: int | None = None, episode: int | None = None

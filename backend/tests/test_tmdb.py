@@ -67,7 +67,9 @@ def tmdb_app(tmp_path: Path):
         "/genre/list/movie": httpx.Response(200, json=GENRE_MOVIE),
         "/genre/list/tv": httpx.Response(200, json=GENRE_TV),
         "/movie/55": httpx.Response(200, json=TITLE_DETAILS),
+        "/movie/55/external_ids": httpx.Response(200, json={"imdb_id": "tt55"}),
         "/tv/77": httpx.Response(200, json=TV_DETAILS),
+        "/tv/77/external_ids": httpx.Response(200, json={"imdb_id": "tt123"}),
         "/movie/55/reviews": httpx.Response(200, json=REVIEWS),
         "/movie/popular": httpx.Response(
             200, json={"results": [{"id": 20, "title": "Pop Movie"}]}
@@ -86,9 +88,11 @@ def tmdb_app(tmp_path: Path):
         "/movie/99": httpx.Response(
             200, json={"id": 99, "title": "Movie 99", "poster_path": None}
         ),
+        "/movie/99/external_ids": httpx.Response(200, json={"imdb_id": "tt99m"}),
         "/tv/99": httpx.Response(
             200, json={"id": 99, "name": "Show 99", "poster_path": "/tvposter.jpg"}
         ),
+        "/tv/99/external_ids": httpx.Response(200, json={"imdb_id": "tt99t"}),
         "/t/p/w342/tvposter.jpg": httpx.Response(200, content=b"fake-bytes"),
     }
 
@@ -231,7 +235,9 @@ def test_title_endpoint_shape(tmdb_app):
 
 
 def test_title_tv_endpoint_fetches_external_ids(tmdb_app):
-    """GET /tmdb/title/{id} for a TV show requests external_ids (for imdb_id)."""
+    """GET /tmdb/title/{id} for a TV show pulls imdb_id from the dedicated
+    external_ids endpoint (the detail response omits it and append_to is
+    not reliably populated for tv)."""
     tc: TestClient = tmdb_app["client"]
     calls: list[httpx.Request] = tmdb_app["calls"]
 
@@ -241,13 +247,12 @@ def test_title_tv_endpoint_fetches_external_ids(tmdb_app):
     data = resp.json()
     assert data["_type"] == "tv"
     assert data["name"] == "Some Show"
-    # imdb_id is available via external_ids
-    assert (data.get("external_ids") or {}).get("imdb_id") == "tt123"
+    # imdb_id is filled from the dedicated external_ids endpoint
+    assert data.get("imdb_id") == "tt123"
 
-    # The tv fetch must have requested append_to=external_ids
-    tv_calls = [c for c in calls[before:] if str(c.url.path).endswith("/tv/77")]
-    assert tv_calls, "expected a tv/77 request"
-    assert tv_calls[0].url.params.get("append_to") == "external_ids"
+    # A dedicated /tv/77/external_ids request was made (not append_to)
+    ext_calls = [c for c in calls[before:] if str(c.url.path).endswith("/tv/77/external_ids")]
+    assert ext_calls, "expected a tv/77/external_ids request"
 
 
 def test_reviews_endpoint_shape(tmdb_app):

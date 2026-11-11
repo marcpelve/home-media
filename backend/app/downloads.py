@@ -74,6 +74,20 @@ class DownloadManager:
         filename: str | None = None,
     ) -> int:
         """Queue a download; returns the downloads.id. Runs in a background task."""
+        # Dedupe: an in-progress download for the same (title, episode) is
+        # returned instead of starting a duplicate.
+        if title_id:
+            conn = get_db(self._db_path)
+            try:
+                existing = conn.execute(
+                    "SELECT id FROM downloads WHERE title_id = ? AND episode IS ? "
+                    "AND status IN ('queued', 'downloading')",
+                    (title_id, episode),
+                ).fetchone()
+                if existing is not None:
+                    return existing[0]
+            finally:
+                conn.close()
         conn = get_db(self._db_path)
         try:
             cur = conn.execute(
@@ -129,6 +143,36 @@ class DownloadManager:
         finally:
             conn.close()
         return True
+
+    def _ids_for(self, title_id: int, episode: int | None) -> list[int]:
+        conn = get_db(self._db_path)
+        try:
+            if episode is None:
+                rows = conn.execute(
+                    "SELECT id FROM downloads WHERE title_id = ?", (title_id,)
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT id FROM downloads WHERE title_id = ? AND episode = ?",
+                    (title_id, episode),
+                ).fetchall()
+            return [r[0] for r in rows]
+        finally:
+            conn.close()
+
+    def remove_for_title(self, title_id: int) -> int:
+        """Cancel + delete every download for a title. Returns count removed."""
+        ids = self._ids_for(title_id, None)
+        for i in ids:
+            self.remove(i)
+        return len(ids)
+
+    def remove_for_episode(self, title_id: int, episode: int) -> int:
+        """Cancel + delete every download for one episode. Returns count removed."""
+        ids = self._ids_for(title_id, episode)
+        for i in ids:
+            self.remove(i)
+        return len(ids)
 
     # -- worker --------------------------------------------------------------
 

@@ -230,3 +230,36 @@ def test_watch_complete_whole_season(tmp_path):
         # ep 1 kept its saved position; eps 2-3 are fresh 0/0 rows
         assert rows[0][2] == 5000
         assert rows[1][2] == 0 and rows[2][2] == 0
+
+
+def test_delete_library_title(tmp_path):
+    from app.downloads import DownloadManager
+
+    db_path, media, movie = _seed(tmp_path)
+    with TestClient(app) as client:
+        app.state.db_path = str(db_path)
+        app.state.downloads = DownloadManager(db_path, dest_dir=tmp_path / "downloads")
+        r = client.delete("/library/123")
+        assert r.status_code == 200
+        assert r.json()["removed"] == 1
+        by_id = {t["tmdb_id"] for t in client.get("/library").json()["titles"]}
+        assert by_id == {456}, "the TV show is gone; the movie remains"
+        assert not media.exists(), "the downloaded file is deleted"
+        assert movie.exists(), "the untouched file is kept"
+
+
+def test_delete_library_episode(tmp_path):
+    from app.downloads import DownloadManager
+
+    db_path, media, movie = _seed(tmp_path)
+    with TestClient(app) as client:
+        app.state.db_path = str(db_path)
+        app.state.downloads = DownloadManager(db_path, dest_dir=tmp_path / "downloads")
+        r = client.delete("/library/123/episodes/1")
+        assert r.status_code == 200
+        assert r.json()["removed"] == 1
+        # 123 had a single episode, so removing it drops the whole title.
+        by_id = {t["tmdb_id"] for t in client.get("/library").json()["titles"]}
+        assert by_id == {456}
+        assert not media.exists()
+        assert movie.exists()

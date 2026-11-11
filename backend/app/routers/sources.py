@@ -21,6 +21,7 @@ router = APIRouter(prefix="/sources", tags=["sources"])
 class SourceQuery(BaseModel):
     season: int | None = None
     episode: int | None = None
+    media_type: str | None = None  # "movie" | "tv" - disambiguates shared TMDB ids
 
 
 def _get_tmdb_client(request: Request) -> TmdbClient:
@@ -44,7 +45,14 @@ def _extract_aliases(details: dict) -> list[str]:
 async def get_sources(tmdb_id: int, query: SourceQuery, request: Request):
     client = _get_tmdb_client(request)
     try:
-        details = await client.title(tmdb_id)
+        # TMDB shares numeric ids across movie/tv, so a tv show's id can
+        # collide with a movie. When the client tells us the type, fetch it
+        # directly (title_typed) to avoid the movie-first fallback returning
+        # the wrong title (which lacks an imdb_id and 400s below).
+        if query.media_type in ("movie", "tv"):
+            details = await client.title_typed(tmdb_id, query.media_type)
+        else:
+            details = await client.title(tmdb_id)
     except Exception:
         raise HTTPException(status_code=404, detail="Title not found")
 
