@@ -66,22 +66,55 @@ jobs:
         working-directory: desktop
         run: npm run build
 
-      # Build the NSIS installer, sign it with the minisign key, and publish
-      # it (plus the .sig and updater manifest) to the GitHub Release.
-      - name: Build, sign, and publish release
+      # Build the NSIS installer and sign it with the minisign key.
+      # tauri-action handles the build + signing; the release upload is done
+      # in the next step because tauri-action@v0 silently skips uploads.
+      - name: Build and sign installer
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.tag_name }}
-          releaseName: ${{ github.tag_name }}
-          releaseBody: |
-            Home Media ${{ github.tag_name }}
-
-            Install the `.exe` (NSIS) for Windows x64. The app updates itself
-            from this release feed — no manual re-download needed.
           projectName: home-media
           tauriDir: desktop/src-tauri
           includeUpdaterManifest: true
+
+      # Create the GitHub Release and upload the signed artifacts.
+      - name: Create release and upload artifacts
+        shell: bash
+        run: |
+          BUNDLE="desktop/src-tauri/target/release/bundle"
+          NSIS="$BUNDLE/nsis"
+
+          # Collect the files to upload
+          FILES=()
+          for f in \
+            "Home Media_0.1.0_x64-setup.exe" \
+            "Home Media_0.1.0_x64-setup.exe.sig" \
+            "Home Media_0.1.0_x64-setup.nsis.zip" \
+            "Home Media_0.1.0_x64-setup.nsis.zip.sig"; do
+            if [ -f "$NSIS/$f" ]; then
+              FILES+=("$NSIS/$f")
+            fi
+          done
+
+          # Include the updater manifest if tauri-action generated one
+          for manifest in "$BUNDLE/latest.json" "$BUNDLE/updater-manifest.json"; do
+            if [ -f "$manifest" ]; then
+              FILES+=("$manifest")
+            fi
+          done
+
+          echo "Uploading: ${FILES[*]}"
+
+          gh release create "${{ github.tag_name }}" \
+            --title "Home Media ${{ github.tag_name }}" \
+            --notes "Home Media ${{ github.tag_name }}
+
+            Install the .exe (NSIS) for Windows x64. The app updates itself
+            from this release feed — no manual re-download needed." \
+            --target "${{ github.sha }}" \
+            "${FILES[@]}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
