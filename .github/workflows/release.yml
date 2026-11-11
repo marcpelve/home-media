@@ -110,6 +110,8 @@ jobs:
           done
 
           echo "Uploading: ${FILES[*]}"
+          echo "=== NSIS dir contents ==="
+          ls -la "$NSIS/" 2>&1
 
           # Create the release via GitHub API
           RELEASE_JSON=$(curl -s -X POST \
@@ -124,15 +126,15 @@ jobs:
           # Upload each asset
           for f in "${FILES[@]}"; do
             LOCAL_NAME=$(basename "$f")
-            # URL-encode the filename (spaces -> %20)
             ENC_NAME=$(python -c "import urllib.parse; print(urllib.parse.quote('$LOCAL_NAME'))")
-            echo "Uploading: $LOCAL_NAME"
-            curl -s -X POST \
+            echo "Uploading: $LOCAL_NAME ($(stat -c%s "$f" 2>/dev/null || echo '?') bytes)"
+            UPLOAD_RESP=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X POST \
               -H "Authorization: token $GITHUB_TOKEN" \
               -H "Accept: application/vnd.github+json" \
               -H "Content-Type: application/octet-stream" \
               "https://api.github.com/repos/marcpelve/home-media/releases/$RELEASE_ID/assets?name=$ENC_NAME&label=" \
-              --data-binary "@$f" > /dev/null
+              --data-binary "@$f")
+            echo "$UPLOAD_RESP"
           done
 
           echo "Release created: https://github.com/marcpelve/home-media/releases/tag/$TAG"
