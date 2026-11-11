@@ -123,20 +123,13 @@ jobs:
           RELEASE_ID=$(echo "$RELEASE_JSON" | python -c "import sys,json; print(json.load(sys.stdin)['id'])")
           echo "Created release ID: $RELEASE_ID"
 
-          # Upload each asset
+          # Upload each asset using gh (handles auth + URL encoding)
           for f in "${FILES[@]}"; do
-            LOCAL_NAME=$(basename "$f")
-            ENC_NAME=$(python -c "import urllib.parse; print(urllib.parse.quote('$LOCAL_NAME'))")
-            echo "Uploading: $LOCAL_NAME ($(stat -c%s "$f" 2>/dev/null || echo '?') bytes)"
-            UPLOAD_RESP=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X POST \
-              -H "Authorization: token $GITHUB_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              -H "Content-Type: application/octet-stream" \
-              "https://api.github.com/repos/marcpelve/home-media/releases/$RELEASE_ID/assets?name=$ENC_NAME&label=" \
-              --data-binary "@$f")
-            echo "$UPLOAD_RESP"
+            echo "Uploading: $(basename "$f")"
+            gh release upload "$TAG" "$f" --clobber 2>&1
           done
 
           echo "Release created: https://github.com/marcpelve/home-media/releases/tag/$TAG"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
