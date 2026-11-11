@@ -178,7 +178,9 @@ function prefetchSources(d, season, episode) {
   const key = srcKey(d, season, episode);
   if (sourceCache.has(key) || sourceInFlight.has(key)) return;
   const controller = new AbortController();
-  const body = d._type === "tv" ? { season, episode } : {};
+  const body = d._type === "tv"
+    ? { season, episode, media_type: d._type }
+    : { media_type: d._type };
   const p = api("/sources/" + d.id, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -232,6 +234,7 @@ function renderView(view, params) {
   if (view === "settings") return renderSettings();
   if (view === "library") return renderLibrary();
   if (view === "librarytitle") return openLibraryTitle(params.id);
+  if (view === "downloads") return renderDownloads();
   if (view === "nowplaying") {
     renderNowPlaying(cacheGet("detail:" + params.id) || {}, params.source, params.season, params.episode);
     return;
@@ -320,6 +323,7 @@ function updateBackButton() {
 document.getElementById("back").addEventListener("click", navBack);
 document.getElementById("home").addEventListener("click", navHome);
 document.getElementById("library").addEventListener("click", () => navPush("library", {}));
+document.getElementById("downloads").addEventListener("click", () => navPush("downloads", {}));
 document.getElementById("settings").addEventListener("click", () => navPush("settings", {}));
 document.getElementById("power").addEventListener("click", exitAndSync);
 
@@ -437,20 +441,23 @@ function makeCard(item, { withProgress = false } = {}) {
     img.dataset.posterSrc = src;
     observePoster(img);
   }
-  card.appendChild(img);
+  const posterWrap = el("div", "poster-wrap");
+  posterWrap.appendChild(img);
 
   // Progress bar overlay at the bottom of the poster (red, Netflix-style).
-  // Movies only: TV show progress lives on individual episode cards, not the
-  // show card (the show card's position is just the current episode).
+  // Always visible (persistent), not hover-gated. Movies only: TV show
+  // progress lives on individual episode cards, not the show card (the show
+  // card's position is just the current episode).
   if (item.position_ms != null && (item.duration_ms > 0 || item.completed) && item.type !== "tv") {
     const frac = item.completed ? 1 : Math.min(1, item.position_ms / item.duration_ms);
     const bar = el("div", "card-progress");
     const fill = el("i");
     fill.style.width = (frac * 100) + "%";
     bar.appendChild(fill);
-    if (item.completed) bar.appendChild(el("span", "card-check", "\u2713"));
-    card.appendChild(bar);
+    posterWrap.appendChild(bar);
+    if (item.completed) posterWrap.appendChild(el("span", "card-check", "\u2713"));
   }
+  card.appendChild(posterWrap);
 
   const meta = el("div", "meta");
   meta.appendChild(el("div", "title", item.title || item.name || ""));
@@ -669,6 +676,15 @@ function makeLibraryCard(t) {
   const sub = [t.type, t.file_count ? t.file_count + (t.type === "tv" ? " eps" : " file") : ""].filter(Boolean).join(" \u00b7 ");
   if (sub) meta.appendChild(el("div", "muted", sub));
   card.appendChild(meta);
+  const trash = el("button", "lib-trash");
+  trash.title = "Remove from library";
+  trash.setAttribute("aria-label", "Remove from library");
+  trash.innerHTML = TRASH_SVG;
+  trash.addEventListener("click", (e) => {
+    e.stopPropagation();
+    removeFromLibrary(t.tmdb_id, null, t.title);
+  });
+  card.appendChild(trash);
   card.addEventListener("click", () => navPush("librarytitle", { id: t.tmdb_id }));
   return card;
 }
@@ -712,6 +728,16 @@ async function openLibraryTitle(id) {
       const playBtn = el("button", "btn", "Play");
       playBtn.addEventListener("click", () => playLocal(t, ep));
       rowEl.appendChild(playBtn);
+      const trash = el("button", "ep-trash");
+      trash.title = "Remove episode";
+      trash.setAttribute("aria-label", "Remove episode");
+      trash.innerHTML = TRASH_SVG;
+      trash.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const label = t.title + (ep.episode != null ? ` E${ep.episode}` : "");
+        removeFromLibrary(t.tmdb_id, ep.episode != null ? ep.episode : null, label);
+      });
+      rowEl.appendChild(trash);
       list.appendChild(rowEl);
     }
     info.appendChild(list);
@@ -736,6 +762,137 @@ async function playLocal(t, ep) {
   } catch (e) {
     alert("Playback failed: " + e.message);
   }
+}
+
+// ---- library delete + downloads screen -------------------------------------
+
+const TRASH_SVG = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2m-9 0v14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V6"/></svg>';
+
+function playLabelFor(d, seasonSel, episodeSel) {
+  const ep = (d._type === "tv" && seasonSel && episodeSel)
+    ? ` S${seasonSel.value} E${episodeSel.value}` : "";
+  return "Play/DL" + ep;
+}
+
+let toastTimer = null;
+function toast(msg) {
+  let t = document.getElementById("app-toast");
+  if (!t) {
+    t = el("div", "app-toast");
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 2200);
+}
+
+async function removeFromLibrary(titleId, episode, label) {
+  const msg = episode != null
+    ? `Remove "${label}" from your library? This deletes the downloaded file.`
+    : `Remove "${label}" from your library? This deletes all of its downloaded files.`;
+  if (!confirm(msg)) return;
+  try {
+    const path = episode != null ? `/library/${titleId}/episodes/${episode}` : `/library/${titleId}`;
+    await api(path, { method: "DELETE" });
+    if (history.state && history.state.view === "librarytitle") {
+      openLibraryTitle(titleId);
+    } else {
+      renderLibrary();
+    }
+  } catch (e) {
+    alert("Could not remove: " + e.message);
+  }
+}
+
+let dlPollTimer = null;
+
+async function renderDownloads() {
+  stopPlayPoll();
+  hideHero();
+  app.innerHTML = "";
+  const wrap = el("div", "downloads-view");
+  wrap.appendChild(el("h1", null, "Downloads"));
+  wrap.appendChild(el("p", "muted", "Active downloads. Finished items appear in your Library."));
+  const list = el("div", "dl-list");
+  wrap.appendChild(list);
+  const empty = el("p", "muted dl-empty", "No active downloads.");
+  empty.style.display = "none";
+  wrap.appendChild(empty);
+  app.appendChild(wrap);
+  await refreshDownloads(list, empty);
+  if (dlPollTimer) clearInterval(dlPollTimer);
+  dlPollTimer = setInterval(() => refreshDownloads(list, empty), 3000);
+  window.scrollTo(0, 0);
+}
+
+async function refreshDownloads(list, empty) {
+  let data;
+  try {
+    data = await api("/downloads");
+  } catch (e) {
+    return;
+  }
+  const active = (data.downloads || []).filter(
+    (d) => d.status === "queued" || d.status === "downloading"
+  );
+  updateDlBadge(active.length);
+  list.innerHTML = "";
+  empty.style.display = active.length ? "none" : "";
+  for (const d of active) {
+    const name = d.file_path ? String(d.file_path).split(/[\\/]/).pop()
+      : `Title #${d.title_id}${d.episode != null ? " E" + d.episode : ""}`;
+    const pct = d.status === "downloading" ? Math.round((d.progress || 0) * 100) : 0;
+    const item = el("div", "dl-item");
+    const top = el("div", "dl-item-top");
+    top.appendChild(el("span", "dl-name", name));
+    top.appendChild(el("span", "dl-pct", d.status === "queued" ? "Queued" : pct + "%"));
+    item.appendChild(top);
+    const track = el("div", "dl-progress-track");
+    const bar = el("div", "dl-progress");
+    bar.style.width = pct + "%";
+    track.appendChild(bar);
+    item.appendChild(track);
+    const foot = el("div", "dl-item-foot");
+    foot.appendChild(el("span", "dl-size", d.size_bytes ? fmtBytes(d.size_bytes) : ""));
+    const cancel = el("button", "btn btn-ghost dl-cancel", "Cancel");
+    cancel.addEventListener("click", async () => {
+      cancel.disabled = true;
+      try {
+        await api("/downloads/" + d.id, { method: "DELETE" });
+        await refreshDownloads(list, empty);
+      } catch (e) {
+        alert("Could not cancel: " + e.message);
+        cancel.disabled = false;
+      }
+    });
+    foot.appendChild(cancel);
+    item.appendChild(foot);
+    list.appendChild(item);
+  }
+}
+
+function updateDlBadge(n) {
+  const badge = document.getElementById("dl-badge");
+  if (!badge) return;
+  badge.textContent = n;
+  badge.classList.toggle("hidden", n === 0);
+}
+
+// Lightweight global poll so the downloads badge stays current on any view.
+async function updateDlBadgeFromApi() {
+  try {
+    const data = await api("/downloads");
+    const active = (data.downloads || []).filter(
+      (d) => d.status === "queued" || d.status === "downloading"
+    ).length;
+    updateDlBadge(active);
+  } catch (e) { /* ignore */ }
+}
+
+function startBadgePoll() {
+  updateDlBadgeFromApi();
+  setInterval(updateDlBadgeFromApi, 10000);
 }
 
 async function openDetail(id, type) {
@@ -907,7 +1064,9 @@ function renderDetail(d, currentEp) {
         } else {
           card.classList.add("no-still");
         }
-        card.appendChild(img);
+        const posterWrap = el("div", "poster-wrap");
+        posterWrap.appendChild(img);
+        card.appendChild(posterWrap);
         const epProg = seasonProgress[ep.episode_number];
         if (epProg) {
           const frac = epProg.completed ? 1 : (epProg.duration_ms > 0 ? Math.min(1, epProg.position_ms / epProg.duration_ms) : 0);
@@ -916,8 +1075,8 @@ function renderDetail(d, currentEp) {
             const fill = el("i");
             fill.style.width = (frac * 100) + "%";
             bar.appendChild(fill);
-            if (epProg.completed) bar.appendChild(el("span", "card-check", "\u2713"));
-            card.appendChild(bar);
+            posterWrap.appendChild(bar);
+            if (epProg.completed) posterWrap.appendChild(el("span", "card-check", "\u2713"));
           }
         }
         const body = el("div", "ep-body");
@@ -1003,7 +1162,7 @@ function renderDetail(d, currentEp) {
     renderEpisodes(curSeason);
   }
 
-  const playLabel = (d._type === "tv" && seasonSel) ? `Play S${curSeason} E${curEp}` : "Play";
+  const playLabel = playLabelFor(d, seasonSel, episodeSel);
   const btn = el("button", "btn", playLabel);
   btn.addEventListener("click", () => startPlayback(d, btn, seasonSel, episodeSel));
 
@@ -1141,6 +1300,28 @@ function openSourcePickerLoading(d, btn, seasonSel, episodeSel) {
   via.appendChild(el("span", "via-note", "- downloads resolve via debrid, no direct torrent"));
   panel.appendChild(via);
 
+  // Watch / Download mode toggle, inside the source list. Default is Watch
+  // (the usual play flow); flipping to DL makes a picked source download the
+  // episode to the library instead of playing it.
+  const handles = { mode: "play" };
+  const epLabel = (d._type === "tv" && seasonSel && episodeSel)
+    ? ` S${seasonSel.value} E${episodeSel.value}` : "";
+  const modeToggle = el("div", "mode-toggle");
+  const playSeg = el("button", "mode-seg active", "Play");
+  const dlSeg = el("button", "mode-seg", "DL");
+  const epSeg = el("span", "mode-ep", epLabel);
+  modeToggle.appendChild(playSeg);
+  modeToggle.appendChild(dlSeg);
+  modeToggle.appendChild(epSeg);
+  panel.appendChild(modeToggle);
+  function setMode(m) {
+    handles.mode = m;
+    playSeg.classList.toggle("active", m === "play");
+    dlSeg.classList.toggle("active", m === "download");
+  }
+  playSeg.addEventListener("click", () => setMode("play"));
+  dlSeg.addEventListener("click", () => setMode("download"));
+
   const list = el("div", "src-list picker-loading");
   list.appendChild(el("div", "spinner"));
   panel.appendChild(list);
@@ -1152,11 +1333,11 @@ function openSourcePickerLoading(d, btn, seasonSel, episodeSel) {
 
   function dismiss() {
     overlay.remove();
-    if (btn) { btn.disabled = false; btn.textContent = "Play"; }
+    if (btn) { btn.disabled = false; btn.textContent = playLabelFor(d, seasonSel, episodeSel); }
   }
   overlay.appendChild(panel);
   app.appendChild(overlay);
-  return { overlay, panel, sub, list, dismiss };
+  return Object.assign(handles, { overlay, panel, sub, list, dismiss });
 }
 
 function fillSourceList(handles, d, sources, seasonSel, episodeSel) {
@@ -1184,7 +1365,10 @@ function fillSourceList(handles, d, sources, seasonSel, episodeSel) {
       s.provider || "",
     ].filter(Boolean).join("  \u00b7  ");
     row.appendChild(meta);
-    row.addEventListener("click", () => pickSource(d, s, seasonSel, episodeSel));
+    row.addEventListener("click", async () => {
+      const resolved = await pickSource(d, s, seasonSel, episodeSel, handles.mode);
+      if (resolved) handles.dismiss();
+    });
     list.appendChild(row);
   }
 }
@@ -1208,15 +1392,16 @@ async function savedStartSeconds(id, season, episode) {
   return 0;
 }
 
-async function pickSource(d, source, seasonSel, episodeSel) {
+async function pickSource(d, source, seasonSel, episodeSel, mode) {
+  const season = seasonSel ? Number(seasonSel.value) : null;
+  const episode = episodeSel ? Number(episodeSel.value) : null;
+  if (mode === "download") return pickSourceDownload(d, source, season, episode);
   try {
     const resolved = await api("/sources/resolve", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ hash: source.hash }),
     });
-    const season = seasonSel ? Number(seasonSel.value) : null;
-    const episode = episodeSel ? Number(episodeSel.value) : null;
     const label = (source.title || d.title || d.name) + (episode ? ` S${season}E${episode}` : "");
     const start = await savedStartSeconds(d.id, season, episode);
     await api("/play", {
@@ -1225,9 +1410,58 @@ async function pickSource(d, source, seasonSel, episodeSel) {
       body: JSON.stringify({ url: resolved.download_url, file_path: label, start_seconds: start }),
     });
     navPush("nowplaying", { id: d.id, source, season, episode });
+    return true;
   } catch (e) {
     alert("Playback failed: " + e.message);
+    return false;
   }
+}
+
+// Download a single resolved source to the library. Dedupes: an episode that
+// is already done is skipped ("Already in library"); one already in progress
+// is skipped ("Already downloading"). Returns true when resolved (so the
+// caller can close the picker), false on failure.
+async function pickSourceDownload(d, source, season, episode) {
+  try {
+    const existing = await findDownload(d.id, episode);
+    if (existing && existing.status === "done") { toast("Already in library"); return true; }
+    if (existing && (existing.status === "queued" || existing.status === "downloading")) {
+      toast("Already downloading");
+      return true;
+    }
+    const resolved = await api("/sources/resolve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ hash: source.hash }),
+    });
+    const target = (resolved.files && resolved.files[0]) || {};
+    await api("/downloads", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        hash: source.hash,
+        file_url: resolved.download_url,
+        title_id: d.id,
+        episode: episode,
+        size_bytes: target.size || null,
+        filename: target.name || null,
+      }),
+    });
+    toast("Download started");
+    return true;
+  } catch (e) {
+    alert("Download failed: " + e.message);
+    return false;
+  }
+}
+
+// Look up an existing download row for (title, episode) to dedupe before
+// starting a new one.
+async function findDownload(titleId, episode) {
+  const data = await api("/downloads").catch(() => null);
+  const list = (data && data.downloads) || [];
+  return list.find((r) => r.title_id === titleId &&
+    (episode == null ? r.episode == null : r.episode === episode)) || null;
 }
 
 async function startPlayback(d, btn, seasonSel, episodeSel) {
@@ -1248,8 +1482,8 @@ async function startPlayback(d, btn, seasonSel, episodeSel) {
         srcs = await inflight.promise;
       } else {
         const body = d._type === "tv"
-          ? { season: season || 1, episode: episode || 1 }
-          : {};
+          ? { season: season || 1, episode: episode || 1, media_type: d._type }
+          : { media_type: d._type };
         srcs = await api(`/sources/${d.id}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1942,6 +2176,7 @@ async function boot() {
   }
   renderHome();
   updateBackButton();
+  startBadgePoll();
 }
 
 boot();
