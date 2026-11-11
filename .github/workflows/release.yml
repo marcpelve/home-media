@@ -76,6 +76,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
+          tagName: ${{ github.ref_name }}
           projectName: home-media
           tauriDir: desktop/src-tauri
           includeUpdaterManifest: true
@@ -93,10 +94,10 @@ jobs:
           # Collect the files to upload
           FILES=()
           for f in \
-            "Home Media_0.1.0_x64-setup.exe" \
-            "Home Media_0.1.0_x64-setup.exe.sig" \
-            "Home Media_0.1.0_x64-setup.nsis.zip" \
-            "Home Media_0.1.0_x64-setup.nsis.zip.sig"; do
+            "Home Media_0.1.1_x64-setup.exe" \
+            "Home Media_0.1.1_x64-setup.exe.sig" \
+            "Home Media_0.1.1_x64-setup.nsis.zip" \
+            "Home Media_0.1.1_x64-setup.nsis.zip.sig"; do
             if [ -f "$NSIS/$f" ]; then
               FILES+=("$NSIS/$f")
             fi
