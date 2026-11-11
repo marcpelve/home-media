@@ -84,6 +84,9 @@ jobs:
       - name: Create release and upload artifacts
         shell: bash
         run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          echo "Creating release for tag: $TAG"
+
           BUNDLE="desktop/src-tauri/target/release/bundle"
           NSIS="$BUNDLE/nsis"
 
@@ -108,9 +111,9 @@ jobs:
 
           echo "Uploading: ${FILES[*]}"
 
-          gh release create "${{ github.tag_name }}" \
-            --title "Home Media ${{ github.tag_name }}" \
-            --notes "Home Media ${{ github.tag_name }}
+          gh release create "$TAG" \
+            --title "Home Media $TAG" \
+            --notes "Home Media $TAG
 
             Install the .exe (NSIS) for Windows x64. The app updates itself
             from this release feed — no manual re-download needed." \
