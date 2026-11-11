@@ -198,6 +198,58 @@ Full design: PLAN.md. This file tracks multi-session progress.
   the animation pauses on hover so the tooltip reads cleanly, and is disabled
   under prefers-reduced-motion.
 
+## Session endpoint (2026-11-11) — GitHub release pipeline
+
+State: repo pushed to GitHub (`marcpelve/home-media`), branch `main`.
+`v0.1.0` release is live with the NSIS installer (`.exe` only — no updater
+artifacts). `v0.1.1` tag is pushed but the CI run is **stuck in queued**
+(GitHub Actions `windows-latest` runner pool congestion; both run attempts
+are uncancelable via API).
+
+### What works
+- `v0.1.0` release: `Home.Media_0.1.0_x64-setup.exe` downloadable from
+  `https://github.com/marcpelve/home-media/releases/tag/v0.1.0`
+- Workflow builds the full Tauri + PyInstaller bundle successfully
+- `gh auth` credential flow resolved (repo-local `credential.helper` set to
+  `!gh auth git-credential`)
+
+### What's missing for a complete release (v0.1.1)
+1. **Updater artifacts** — `tauri-action` needs `tagName` set to generate
+   `.sig` + `.nsis.zip` + `.nsis.zip.sig` (the files the Tauri updater
+   downloads for self-updates). `tagName: ${{ github.ref_name }}` is now in
+   the workflow; untested because the run is stuck.
+2. **Updater manifest** — `latest.json` (or equivalent) needs to be
+   uploaded alongside the artifacts so the in-app updater can discover
+   new versions. `includeUpdaterManifest: true` is set on tauri-action;
+   the manifest file needs to be picked up in the upload step.
+3. **Asset upload** — the workflow creates the release via GitHub API
+   (`curl`) then uploads assets via `gh release upload`. This path is
+   untested end-to-end (the v0.1.0 release was created manually after
+   multiple workflow iterations).
+4. **v0.1.1 CI run** — stuck in `queued` since 2026-11-11 ~20:18 UTC.
+   Two run attempts (43095230132, 43096541945) both uncancelable.
+   Next step: once GitHub clears the queue (or the runs time out),
+   verify the build produces all 4 NSIS artifacts + manifest, and that
+   the release + assets appear on GitHub.
+
+### Workflow file state (`.github/workflows/release.yml`)
+- PyInstaller backend: `pip install -r requirements.txt` (fixed from
+  `pip install -e .`)
+- Resources staging: `mkdir -p` before `cp` (fixed missing dir)
+- tauri-action: builds + signs; `tagName` restored for updater artifacts;
+  does NOT handle release creation/upload (silently skips)
+- Release creation: `curl` to GitHub API (creates release)
+- Asset upload: `gh release upload` with `--clobber`
+- Filenames hardcoded to `0.1.1` in the upload step (will need updating
+  for each future version — consider parameterizing)
+
+### To do when the queue clears
+1. Check if v0.1.1 run completed or timed out
+2. If timed out: delete tag `v0.1.1`, re-push to retrigger
+3. Verify release has all 4 assets + manifest
+4. Test the in-app updater: install v0.1.0, check for update -> v0.1.1
+5. Consider parameterizing the version in the workflow (derive from tag)
+
 ## Clean-machine handoff (the one thing that can't be done here)
 Copy one installer to a fresh Windows box (no prior Home Media install, no
 dev tools) and verify:
