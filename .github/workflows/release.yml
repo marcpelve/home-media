@@ -123,12 +123,15 @@ jobs:
 
           # Upload each asset
           for f in "${FILES[@]}"; do
-            echo "Uploading: $(basename "$f")"
+            LOCAL_NAME=$(basename "$f")
+            # URL-encode the filename (spaces -> %20)
+            ENC_NAME=$(python -c "import urllib.parse; print(urllib.parse.quote('$LOCAL_NAME'))")
+            echo "Uploading: $LOCAL_NAME"
             curl -s -X POST \
               -H "Authorization: token $GITHUB_TOKEN" \
               -H "Accept: application/vnd.github+json" \
               -H "Content-Type: application/octet-stream" \
-              "https://api.github.com/repos/marcpelve/home-media/releases/$RELEASE_ID/assets?name=$(basename "$f")&label=" \
+              "https://api.github.com/repos/marcpelve/home-media/releases/$RELEASE_ID/assets?name=$ENC_NAME&label=" \
               --data-binary "@$f" > /dev/null
           done
 
