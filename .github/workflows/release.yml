@@ -111,13 +111,27 @@ jobs:
 
           echo "Uploading: ${FILES[*]}"
 
-          gh release create "$TAG" \
-            --title "Home Media $TAG" \
-            --notes "Home Media $TAG
+          # Create the release via GitHub API
+          RELEASE_JSON=$(curl -s -X POST \
+            -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/marcpelve/home-media/releases" \
+            -d "{\"tag_name\": \"$TAG\", \"target_commitish\": \"main\", \"name\": \"Home Media $TAG\", \"body\": \"Home Media $TAG - Install the .exe for Windows x64.\"}")
 
-            Install the .exe (NSIS) for Windows x64. The app updates itself
-            from this release feed — no manual re-download needed." \
-            --target "${{ github.sha }}" \
-            "${FILES[@]}"
+          RELEASE_ID=$(echo "$RELEASE_JSON" | python -c "import sys,json; print(json.load(sys.stdin)['id'])")
+          echo "Created release ID: $RELEASE_ID"
+
+          # Upload each asset
+          for f in "${FILES[@]}"; do
+            echo "Uploading: $(basename "$f")"
+            curl -s -X POST \
+              -H "Authorization: token $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "Content-Type: application/octet-stream" \
+              "https://api.github.com/repos/marcpelve/home-media/releases/$RELEASE_ID/assets?name=$(basename "$f")&label=" \
+              --data-binary "@$f" > /dev/null
+          done
+
+          echo "Release created: https://github.com/marcpelve/home-media/releases/tag/$TAG"
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
