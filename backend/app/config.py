@@ -55,6 +55,14 @@ def _default_db_path() -> str:
     return str(_base_dir() / "data" / "home_media.db")
 
 
+def _default_download_dir() -> str:
+    return str(_base_dir() / "data" / "downloads")
+
+
+def _default_poster_dir() -> str:
+    return str(_base_dir() / "data" / "posters")
+
+
 def _default_mpv_path() -> str:
     # Bundled next to the executable when packaged; empty in dev (the .env
     # supplies the real path).
@@ -69,7 +77,8 @@ class Config:
     tmdb_read_access_token: str = ""
     torbox_api_key: str = ""
     trakt_client_id: str = ""
-    download_dir: str = ""
+    download_dir: str = field(default_factory=_default_download_dir)
+    poster_dir: str = field(default_factory=_default_poster_dir)
     mpv_path: str = field(default_factory=_default_mpv_path)
     db_path: str = field(default_factory=_default_db_path)
 
@@ -83,7 +92,8 @@ def load_config(env_path: Path | None = None) -> Config:
         tmdb_read_access_token=env.get("TMDB_READ_ACCESS_TOKEN", ""),
         torbox_api_key=env.get("TORBOX_API_KEY", ""),
         trakt_client_id=env.get("TRAKT_CLIENT_ID", ""),
-        download_dir=env.get("DOWNLOAD_DIR", ""),
+        download_dir=env.get("DOWNLOAD_DIR", _default_download_dir()),
+        poster_dir=env.get("POSTER_DIR", _default_poster_dir()),
         mpv_path=env.get("MPV_PATH", _default_mpv_path()),
         db_path=env.get("DB_PATH", _default_db_path()),
     )

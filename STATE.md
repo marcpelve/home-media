@@ -216,8 +216,8 @@ the backend (port 8790 released).
 
 ## Session endpoint (2026-11-10) — pick back up here
 State: clean working tree. All servers spun down; unauthed test stack torn
-down; scratch dir removed. 124/124 backend tests pass. dist/ synced with
-src/ as of 77d0064.
+down; scratch dir removed. 130/130 backend tests pass. dist/ synced with
+src/.
 
 Recent commits (branch trakt): a180bec (TMDB/Torbox in-app auth),
 b38244f (hover/scroll pointer-moved guard — cleanly revertable),
@@ -229,8 +229,14 @@ installer run (handoff above).
 
 Next steps (corrected 2026-11-10 — verified against the code):
 1. Clean-machine installer run (needs the user) — see the handoff above.
-2. Settings: download-dir / quality-prefs / cache-size controls.
-3. Detail view: render TMDB reviews (the /tmdb/reviews endpoint exists).
+
+Done this session (Settings polish):
+- Poster-cache size readout + Clear-cache button in Settings (GET /config,
+  POST /config/clear-cache).
+- Download dir defaults to <app>/data/downloads; posters to
+  <app>/data/posters (decoupled from the download folder).
+- Dropped: quality-pref (the source picker already surfaces quality/DV/HDR)
+  and TMDB reviews (user declined).
 
 Tabled (pending the user's own testing):
 - Download-to-library UI — Download button in the detail view + a Downloads

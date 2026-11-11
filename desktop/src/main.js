@@ -1581,8 +1581,55 @@ async function renderSettings() {
     '<p class="muted">Loading&hellip;</p></section>' +
     '<section class="trakt-panel" id="torbox-panel"><h2>Torbox</h2>' +
     '<p class="muted">Loading&hellip;</p></section></div>';
-  await Promise.all([loadTraktStatus(), loadTmdbStatus(), loadTorboxStatus()]);
+  await Promise.all([loadTraktStatus(), loadTmdbStatus(), loadTorboxStatus(), loadCacheStatus()]);
   refreshSvcStatus();
+}
+
+/* Settings: poster cache size readout + clear (GET /config, POST /config/clear-cache). */
+function fmtBytes(n) {
+  if (n < 1024) return n + " B";
+  const units = ["KB", "MB", "GB", "TB"];
+  let i = -1;
+  do { n /= 1024; i++; } while (n >= 1024 && i < units.length - 1);
+  return n.toFixed(n < 10 ? 1 : 0) + " " + units[i];
+}
+
+async function loadCacheStatus() {
+  const panel = document.getElementById("cache-panel");
+  if (!panel) return;
+  let st;
+  try { st = await api("/config"); }
+  catch (e) { panel.innerHTML = '<h2>Cache</h2><p class="muted">Status unavailable.</p>'; return; }
+  renderCachePanel(st);
+}
+
+function renderCachePanel(st) {
+  const panel = document.getElementById("cache-panel");
+  if (!panel) return;
+  panel.innerHTML =
+    '<h2>Cache</h2>' +
+    '<p>Poster cache: <strong>' + fmtBytes(st.cache_bytes) + '</strong></p>' +
+    '<p class="muted">' + esc(st.poster_dir) + '</p>' +
+    '<button class="btn" id="cache-clear">Clear cache</button>' +
+    '<p class="trakt-msg muted" id="cache-msg"></p>';
+  const b = document.getElementById("cache-clear");
+  if (b) b.addEventListener("click", clearCache);
+}
+
+async function clearCache() {
+  if (!confirm("Clear the poster cache? Posters will re-download when you view titles again.")) return;
+  const msg = document.getElementById("cache-msg");
+  if (msg) msg.textContent = "Clearing\u2026";
+  try {
+    await api("/config/clear-cache", { method: "POST" });
+    const st = await api("/config");
+    renderCachePanel(st);
+    const m = document.getElementById("cache-msg");
+    if (m) m.textContent = "Cache cleared.";
+  } catch (e) {
+    const m = document.getElementById("cache-msg");
+    if (m) m.textContent = "Clear failed: " + e.message;
+  }
 }
 
 async function loadTraktStatus() {

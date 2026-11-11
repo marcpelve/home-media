@@ -6,7 +6,6 @@ Run with:
 
 import asyncio
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,6 +26,7 @@ from app.routers.play import router as play_router
 from app.routers.trakt import router as trakt_router
 from app.routers.library import router as library_router
 from app.routers.collection import router as collection_router
+from app.routers.config import router as config_router
 
 # Load config at import; the DB path drives startup init. Secrets here are
 # only read, never logged.
@@ -56,12 +56,11 @@ async def lifespan(app: FastAPI):
     # Create the local DB (source of truth) on startup if it is absent.
     init_db(_config.db_path)
     # Create the TMDB client and store it on app state for routers.
-    # Posters cache next to the DB unless a download dir is configured.
-    poster_dir = _config.download_dir or str(Path(_config.db_path).parent / "posters")
+    # Posters cache in their own folder, decoupled from the download dir.
     app.state.tmdb_client = TmdbClient(
         token=_config.tmdb_read_access_token,
         db_path=_config.db_path,
-        poster_dir=poster_dir,
+        poster_dir=_config.poster_dir,
     )
     # Torbox debrid client + download manager, stored for the /sources and
     # /downloads routers.
@@ -69,10 +68,13 @@ async def lifespan(app: FastAPI):
         api_key=_config.torbox_api_key, db_path=_config.db_path
     )
     app.state.downloads = DownloadManager(
-        db_path=_config.db_path, dest_dir=_config.download_dir or None
+        db_path=_config.db_path, dest_dir=_config.download_dir
     )
     # Local DB path for routers that persist (e.g. watch progress).
     app.state.db_path = _config.db_path
+    # Download + poster dirs for the /config router (readout + clear cache).
+    app.state.download_dir = _config.download_dir
+    app.state.poster_dir = _config.poster_dir
     # mpv is spawned lazily on the first /play; stopped on shutdown.
     app.state.mpv = MpvClient(mpv_path=_config.mpv_path)
     # Trakt client (device code flow) for watched tracking + sync.
@@ -110,6 +112,7 @@ app.include_router(play_router)
 app.include_router(trakt_router)
 app.include_router(library_router)
 app.include_router(collection_router)
+app.include_router(config_router)
 
 
 @app.get("/health")

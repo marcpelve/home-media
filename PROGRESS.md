@@ -65,8 +65,14 @@ Design: PLAN.md  ·  Detailed log: STATE.md  ·  This file: live phase progress.
 ## Next steps (corrected 2026-11-10 — verified against the code)
 
 - [ ] 1. Clean-machine installer run (needs the user — see STATE.md handoff)
-- [ ] 2. Settings: download-dir / quality-prefs / cache-size controls
-- [ ] 3. Detail view: render TMDB reviews (/tmdb/reviews endpoint exists)
+
+Done this session (Settings polish):
+- [x] Poster-cache size readout + Clear-cache button (GET /config,
+      POST /config/clear-cache)
+- [x] Download dir → <app>/data/downloads; posters → <app>/data/posters
+      (decoupled from downloads)
+- Dropped: quality-pref (source picker surfaces quality/DV/HDR) and
+      TMDB reviews (user declined)
 
 Tabled (pending the user's own testing):
 - [ ] Download-to-library UI (Download button in detail + Downloads screen;
