@@ -58,6 +58,13 @@ jobs:
           rm -rf desktop/src-tauri/resources/home-media
           cp -r backend/dist/home-media desktop/src-tauri/resources/home-media
 
+      # Build the frontend: the package.json build script copies src/ -> dist/,
+      # which is the frontendDist Tauri bundles. No npm deps are required.
+      - name: Build frontend (src -> dist)
+        shell: bash
+        working-directory: desktop
+        run: npm run build
+
       # Build the NSIS installer, sign it with the minisign key, and publish
       # it (plus the .sig and updater manifest) to the GitHub Release.
       - name: Build, sign, and publish release
