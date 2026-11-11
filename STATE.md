@@ -193,6 +193,10 @@ Full design: PLAN.md. This file tracks multi-session progress.
   note when TMDB is unconfigured. Refresh hooks on key save/remove + Trakt
   sign-in/out. 1 new test (124 total pass). Browser-verified the dot render
   + hidden-by-default tooltip.
+- (2026-11-10) Service health dots slow-blink (commit 77d0064): a 2.4s
+  ease-in-out opacity pulse on .svc-dot draws the eye to a problem service;
+  the animation pauses on hover so the tooltip reads cleanly, and is disabled
+  under prefers-reduced-motion.
 
 ## Clean-machine handoff (the one thing that can't be done here)
 Copy one installer to a fresh Windows box (no prior Home Media install, no
@@ -210,14 +214,29 @@ dev tools) and verify:
 Expected: clean install -> app launches to home -> closing the window kills
 the backend (port 8790 released).
 
-## Next
-- [-] P6: Frontend (home, search, detail, picker, playback UI, Trakt panel,
-  offline library done; E2E playback still blocked on a real Torbox API key)
-- [x] P7: Packaging (one-dir sidecar + startup grace + MSI/NSIS installers
-  built from current sources; local verification done - only the
-  clean-machine installer run remains, see the handoff above)
-- (done) Tauri sidecar/process management - the Tauri app now owns the
-  backend lifecycle (spawn on launch / kill on close).
+## Session endpoint (2026-11-10) — pick back up here
+State: clean working tree. All servers spun down (8790/8791/8795/8796);
+unauthed test stack torn down; scratch dir removed. 124/124 backend tests
+pass. dist/ synced with src/ as of 77d0064.
+
+Recent commits (branch trakt): a180bec (TMDB/Torbox in-app auth),
+b38244f (hover/scroll pointer-moved guard — cleanly revertable),
+24f971a (service health UI: 503 + top-bar dots + home note),
+77d0064 (dots slow-blink).
+
+Phase status: P6 frontend done (E2E playback still needs a real Torbox
+key to exercise resolve); P7 packaging done pending the clean-machine
+installer run (handoff above).
+
+Next-step options proposed to the user (pick one to start):
+1. Continue Watching / Recently Added from Trakt — a real media-center home.
+2. Source-picker quality preferences — filter/sort debrid releases
+   (1080p+, Dolby Vision/HDR) to surface the best release first.
+3. Kodi-style keyboard focus, finished across views (home, library, search,
+   source picker).
+4. Download-to-library via Torbox — grab a release locally, not just stream.
+5. Tooling: opencode regression (reports 1.18.5 despite 2.2.7 installed) —
+   unresolved; it is the default coding delegate.
 
 ## Decisions
 - TMDB auth: v4 Read Access Token via `Authorization: *** header (not the v3

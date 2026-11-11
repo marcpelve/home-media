@@ -60,6 +60,15 @@ Design: PLAN.md  ·  Detailed log: STATE.md  ·  This file: live phase progress.
 - [x] Home: contextual "set your TMDB key" note when TMDB is unconfigured
 - [x] Refresh hooks on key save/remove + Trakt sign-in/out
 - [x] 1 new test (124 total pass)
+- [x] Dots slow-blink (2.4s pulse; pauses on hover; reduced-motion safe)
+
+## Next steps (proposed 2026-11-10 — pick one)
+
+- [ ] 1. Continue Watching / Recently Added from Trakt (real media-center home)
+- [ ] 2. Source-picker quality preferences (1080p+, DV/HDR sorting)
+- [ ] 3. Kodi-style keyboard focus across remaining views
+- [ ] 4. Download-to-library via Torbox
+- [ ] 5. Fix the opencode version regression (1.18.5 vs 2.2.7)
 
 ## Legend
 
