@@ -77,28 +77,15 @@ def _parse_capabilities(name_info: str, name: str) -> list[str]:
 
     `name_info` is Cocoscrapers' cleaned, dot-separated, lowercase form
     (e.g. ".2160p.bluray.x265.10bit.sdr.dts.hd.ma.5.1"); fall back to the raw
-    `name` when it is absent. Tags are returned in a fixed display order:
-    source, codec, HDR, bit depth, audio.
+    `name` when it is absent. Tags are returned in a fixed display order that
+    mirrors the ranking priority - HDR and audio lead the row, with the codec
+    and source/container tags kept near the end, so a 4K BluRay DV/HDR/Atmos
+    release reads "Dolby Vision HDR 10-bit Atmos HEVC BluRay" rather than
+    "BluRay ... Atmos HEVC".
     """
     raw = (name_info or name or "").lower()
     tokens = set(re.split(r"[^a-z0-9]+", raw))
     tags: list[str] = []
-    # source / container
-    if tokens & {"bluray", "brrip", "bdrip"}:
-        tags.append("BluRay")
-    elif "remux" in tokens:
-        tags.append("Remux")
-    elif tokens & {"web", "webdl", "webm"}:
-        tags.append("Web")
-    elif "hdtv" in tokens:
-        tags.append("HDTV")
-    # codec
-    if tokens & {"x265", "hevc"}:
-        tags.append("HEVC")
-    elif tokens & {"x264", "h264"}:
-        tags.append("H.264")
-    elif "av1" in tokens:
-        tags.append("AV1")
     # HDR
     # "Dolby Vision" appears as the fused/abbrev token in cleaned names and as
     # the two tokens "dolby" + "vision" in raw dotted names - catch both.
@@ -124,6 +111,23 @@ def _parse_capabilities(name_info: str, name: str) -> list[str]:
         tags.append("DD")
     if "dts" in tokens:
         tags.append("DTS")
+    # codec (kept near the end, just before the source/container tag)
+    if tokens & {"x265", "hevc"}:
+        tags.append("HEVC")
+    elif tokens & {"x264", "h264"}:
+        tags.append("H.264")
+    elif "av1" in tokens:
+        tags.append("AV1")
+    # source / container (kept last so the HDR/audio tags that drive the sort
+    # lead the row)
+    if tokens & {"bluray", "brrip", "bdrip"}:
+        tags.append("BluRay")
+    elif "remux" in tokens:
+        tags.append("Remux")
+    elif tokens & {"web", "webdl", "webm"}:
+        tags.append("Web")
+    elif "hdtv" in tokens:
+        tags.append("HDTV")
     return tags
 
 
