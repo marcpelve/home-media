@@ -74,10 +74,13 @@ pub fn run() {
                 })?
                 .clone();
             let mut cmd = Command::new(&sidecar);
+            // Null out std handles so Windows doesn't allocate a console/ConPTY.
+            cmd.stdin(std::process::Stdio::null());
+            cmd.stdout(std::process::Stdio::null());
+            cmd.stderr(std::process::Stdio::null());
             #[cfg(target_os = "windows")]
             {
-                // CREATE_NO_WINDOW: don't pop a console for the sidecar.
-                cmd.creation_flags(0x08000000);
+                cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
             }
             let child = cmd.spawn()?;
             app.manage(Mutex::new(Some(child)));
