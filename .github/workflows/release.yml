@@ -85,15 +85,18 @@ jobs:
       # updater manifest, so upload those to the release it created here.
       - name: Upload updater assets
         shell: bash
-        working-directory: desktop/src-tauri
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
           VERSION="${TAG#v}"
-          NSIS="target/release/bundle/nsis"
-          BUNDLE="target/release/bundle"
+          NSIS="desktop/src-tauri/target/release/bundle/nsis"
+          BUNDLE="desktop/src-tauri/target/release/bundle"
+
+          echo "PWD: $(pwd)"
+          echo "--- NSIS dir contents ---"
+          ls -la "$NSIS" || echo "(NSIS dir missing)"
 
           # Signatures (names don't matter for the updater; upload as-is)
           for f in \
