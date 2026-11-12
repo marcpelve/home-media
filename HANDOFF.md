@@ -1,48 +1,43 @@
 # Project Handoff: home-media
 
-**Date:** 2026-11-11 20:45
+**Date:** 2026-11-12 21:05
 **Branch:** main
-**Latest commit:** 2104c47 Update STATE.md: GitHub release pipeline status
+**Latest commit:** d11996f Sign NSIS bundles in workflow (tauri build does not sign)
 
 ## Done
-- P0–P7 complete: backend (FastAPI + SQLite + TMDB + Torbox + mpv + Trakt), Tauri desktop shell, frontend (home, search, detail, source picker, now-playing, library, settings), packaging (PyInstaller one-dir + NSIS/MSI installers)
-- 130/130 backend tests passing
-- v0.1.0 release live on GitHub with NSIS installer
-- GitHub repo pushed (`marcpelve/home-media`), CI pipeline working
-- Security audit: clean (no Megalodon indicators)
-- Workflow fixes: pip install, resources dir, tagName, release creation, asset upload
+- Fixed the fresh-install crash: declared the vendored cfscrape runtime deps (`requests`, `urllib3`, `requests_toolbelt`, `pyparsing`, `pyaes`, `brotli`) in `backend/requirements.txt` (commit `57ad945`). A clean venv + PyInstaller build now resolves all imports (verified `urllib3` and `cfscrape` import OK).
+- Bumped app version to `0.1.2` in `tauri.conf.json` + `Cargo.toml` (commit `df256e1`).
+- Reworked `.github/workflows/release.yml` so the GitHub release carries all 5 assets: tauri-action creates the release + uploads the `.exe`; a follow-up step signs the NSIS bundles (creates `.nsis.zip` + `tauri sign`) and uploads `.exe.sig`, `.nsis.zip`, `.nsis.zip.sig`, and a generated `latest.json` (commits `2e2bba9`, `9e813f3`, `d11996f`).
+- Release `v0.1.2` is live on GitHub with the installer `Home.Media_0.1.2_x64-setup.exe` (testable now).
 
 ## Current state
-- **Working:** v0.1.0 installer downloadable, CI builds successfully, all app features functional
-- **In-flight:** v0.1.1 tag pushed, CI stuck in `queued` (runs 43095230132, 43096541945) — GitHub runner pool congestion
-- **Missing from release:** updater artifacts (.sig, .nsis.zip, .nsis.zip.sig), updater manifest (latest.json) — tauri-action `tagName` fix is in place but untested
-- **Pending:** clean-machine installer verification (user needs to run on a fresh Windows box)
+- `main` clean at `d11996f`, pushed. Tag `v0.1.2` on origin at `d11996f`.
+- Run `43138843131` (sign-bundles fix) is in-flight; the 4 updater assets (`.exe.sig`, `.nsis.zip`, `.nsis.zip.sig`, `latest.json`) are not yet on the release.
+- Fresh install of the `.exe` works (dep fix included). Auto-updater is inert until the 4 updater assets land on the release.
 
 ## Blockers
-- GitHub Actions `windows-latest` runner pool congested — both v0.1.1 runs uncancelable via API. Must wait for GitHub to clear the queue or time out the runs.
+- None hard. The in-flight run `43138843131` is the open item. If it fails, inspect the "Sign and upload updater assets" step (it logs a debug `ls` before/after signing).
 
 ## Next steps
-1. Check if v0.1.1 CI runs completed or timed out (`gh run list`)
-2. If timed out: `git push origin :refs/tags/v0.1.1` then re-tag and push
-3. Verify v0.1.1 release has all 4 assets + updater manifest
-4. Test in-app updater: install v0.1.0 → check for update → v0.1.1
-5. Clean-machine installer run (user): fresh Windows box, run NSIS, verify app boots + backend binds :8790
-6. Consider parameterizing version in workflow (derive from tag, not hardcoded)
+1. Check `gh run view 43138843131 --json status,conclusion`.
+2. On success: confirm `gh release view v0.1.2 --json assets` shows all 5 files.
+3. On failure: `gh run view 43138843131 --log-failed` — likely `tauri sign sign` (key/password, `tauri` CLI, or `zip`).
+4. User will land real app changes before v0.1.3; do not re-push v0.1.2 to re-test.
 
 ## Key decisions
-- `gh release upload` over raw curl for asset upload (handles auth token format + filename encoding)
-- Tag derived from `GITHUB_REF` not `github.tag_name` (latter empty on re-pushed tags)
-- `tagName: ${{ github.ref_name }}` on tauri-action — required for updater artifact generation
-- App data (`com.homemedia.app`) separate from install location — survives reinstalls
-- Action refs use tags not pinned SHAs — user deferred pinning ("fine for now")
-- No autonomous commit/PR rules apply to this repo (that's llama.cpp-specific)
+- `tauri build` does NOT sign the NSIS bundles in this setup (produces only the `.exe` in every run). The workflow signs them manually (commit `d11996f`) — do not rely on tauri-action/`tauri build` signing.
+- `tauri-action@v0` uploads only the main `.exe`; its valid inputs are `projectPath`/`tagName`/`releaseName`/`includeUpdaterJson` (the dev-README names `uploadUpdaterJson`/`uploadUpdaterSignatures` are silently ignored by v0).
+- The `.nsis.zip` upload asset is dot-named (`Home.Media_…`) to match the `latest.json` URL, while the on-disk bundle files use a space (`Home Media_…`).
+- No self-hosted runner (user declined). The two stuck v0.1.1 runs (`43096541945`, `43095230132`) are harmless (no `concurrency` block).
+- No autonomous commit/PR rules apply to this repo (that's llama.cpp-specific); direct commits to `main` are fine for small, fully-diagnosed fixes.
 
 ## References
 - Repo: `C:\ai\repos\home-media`
 - GitHub: `https://github.com/marcpelve/home-media`
-- v0.1.0 release: `https://github.com/marcpelve/home-media/releases/tag/v0.1.0`
+- Release: `https://github.com/marcpelve/home-media/releases/tag/v0.1.2`
 - Workflow: `.github/workflows/release.yml`
-- STATE.md: full chronological project log
-- App data: `C:\Users\marcp\AppData\Local\com.homemedia.app`
-- Old install: `C:\Users\marcp\AppData\Local\Home Media\uninstall.exe`
-- Stuck CI runs: 43095230132, 43096541945
+- Deps: `backend/requirements.txt`
+- Version files: `desktop/src-tauri/tauri.conf.json`, `desktop/src-tauri/Cargo.toml`
+- Bundle output: `desktop/src-tauri/target/release/bundle/nsis/`
+- Run IDs — in-flight `43138843131`; failed `43135921275`, `43137468384`; success(partial) `43134211623`; stuck v0.1.1 `43096541945`, `43095230132`
+- Commits this session: `57ad945`, `d06db76`, `df256e1`, `2e2bba9`, `9e813f3`, `d11996f`
