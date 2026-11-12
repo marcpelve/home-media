@@ -23,8 +23,8 @@ function el(tag, cls, text) {
 }
 
 function openExternal(url) {
-  if (window.__TAURI__ && window.__TAURI__.opener) {
-    window.__TAURI__.opener.open(url);
+  if (window.__TAURI__ && window.__TAURI__.core) {
+    window.__TAURI__.core.invoke("opener_open", { url });
   } else {
     window.open(url, "_blank");
   }

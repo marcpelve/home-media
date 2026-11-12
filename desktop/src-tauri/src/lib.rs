@@ -3,6 +3,9 @@ use std::sync::Mutex;
 use tauri::{App, Manager, WindowEvent};
 use tauri_plugin_updater::UpdaterExt;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
 /// Update info surfaced to the frontend.
 #[derive(serde::Serialize)]
 struct UpdateInfo {
@@ -70,7 +73,13 @@ pub fn run() {
                     std::io::Error::new(std::io::ErrorKind::NotFound, "home-media sidecar not found")
                 })?
                 .clone();
-            let child = Command::new(sidecar).spawn()?;
+            let mut cmd = Command::new(&sidecar);
+            #[cfg(target_os = "windows")]
+            {
+                // CREATE_NO_WINDOW: don't pop a console for the sidecar.
+                cmd.creation_flags(0x08000000);
+            }
+            let child = cmd.spawn()?;
             app.manage(Mutex::new(Some(child)));
             Ok(())
         })
