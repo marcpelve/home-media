@@ -22,7 +22,18 @@ import types
 from pathlib import Path
 
 _COCO_DIR = Path(__file__).resolve().parent
-_DATA_DIR = _COCO_DIR.parent.parent.parent / "data" / "coco"
+
+def _get_data_dir() -> Path:
+    """User-writable data directory (not under the install path)."""
+    if sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+    return base / "Home Media" / "data" / "coco"
+
+_DATA_DIR = _get_data_dir()
 
 _LOGGER = logging.getLogger("cocoscrapers")
 
