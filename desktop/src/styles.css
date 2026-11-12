@@ -620,6 +620,10 @@ select.focused { outline: 2px solid #fff; outline-offset: 2px; }
 }
 /* Steady while hovered so the tooltip reads cleanly (no mid-read blink). */
 .svc-dot:hover { animation: none; }
+.svc-dot.svc-dot-update {
+  background: #4a9eff;
+  box-shadow: 0 0 0 2px rgba(74, 158, 255, 0.22);
+}
 @keyframes svc-blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.28; }
@@ -648,6 +652,16 @@ select.focused { outline: 2px solid #fff; outline-offset: 2px; }
   text-align: left;
 }
 .svc-dot:hover .svc-tip { display: flex; }
+/* Invisible bridge from the dot to the tooltip so the tooltip stays visible
+   when the mouse moves from the dot into the tooltip body. */
+.svc-tip::before {
+  content: "";
+  position: absolute;
+  top: -12px;
+  left: 0;
+  right: 0;
+  height: 12px;
+}
 .svc-tip strong { font-size: 14px; }
 .svc-tip .svc-msg { color: var(--muted); }
 .svc-fix {

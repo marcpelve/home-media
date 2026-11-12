@@ -22,6 +22,14 @@ function el(tag, cls, text) {
   return n;
 }
 
+function openExternal(url) {
+  if (window.__TAURI__ && window.__TAURI__.opener) {
+    window.__TAURI__.opener.open(url);
+  } else {
+    window.open(url, "_blank");
+  }
+}
+
 // Persistent hero on document.body (outside #app so the MutationObserver
 // never fires on its mutations). Shown on focus/hover, hidden on view change.
 let heroEl = null;
@@ -334,6 +342,7 @@ document.getElementById("power").addEventListener("click", exitAndSync);
 // renders when every service is healthy. Driven by the three /status endpoints
 // (they read the in-app settings table, so no external calls — stays light).
 let svcStatus = null; // { tmdb: bool, torbox: bool, trakt: bool }
+let updateAvailable = false;
 
 const SVC_MESSAGES = {
   tmdb: { name: "TMDB", msg: "Not configured. Add your token to enable metadata (trending, posters, titles)." },
@@ -377,6 +386,27 @@ function renderServiceStatus() {
     dot.appendChild(tip);
     wrap.appendChild(dot);
   }
+  if (updateAvailable) {
+    const dot = el("span", "svc-dot svc-dot-update");
+    dot.title = "Update available";
+    const tip = el("span", "svc-tip");
+    tip.innerHTML =
+      "<strong>Update available</strong>" +
+      '<span class="svc-msg">A new version of Home Media is ready to install.</span>' +
+      '<button class="svc-fix" data-panel="updates-panel">Open Settings</button>';
+    dot.appendChild(tip);
+    wrap.appendChild(dot);
+  }
+}
+
+async function checkForUpdateOnStartup() {
+  const tauri = window.__TAURI__;
+  if (!tauri || !tauri.core) return;
+  try {
+    const update = await tauri.core.invoke("check_for_update");
+    updateAvailable = !!update;
+    renderServiceStatus();
+  } catch (_) { /* network error — stay hidden */ }
 }
 
 // One-time delegated handler: "Open Settings" from any status dot.
@@ -2013,10 +2043,12 @@ async function loadTmdbStatus() {
       '<p class="muted">Not connected. Add your TMDB v4 token to enable metadata lookups.</p>' +
       '<input type="password" class="key-input" id="tmdb-key" placeholder="TMDB v4 read token" autocomplete="off" spellcheck="false">' +
       '<button class="btn" id="tmdb-save">Save token</button> ' +
-      '<a class="muted" href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">Get a token</a>' +
+      '<button class="btn btn-ghost" id="tmdb-getkey">Get a token</button>' +
       '<p class="trakt-msg muted" id="tmdb-msg"></p>';
     const b = document.getElementById("tmdb-save");
     if (b) b.addEventListener("click", saveTmdbKey);
+    const g = document.getElementById("tmdb-getkey");
+    if (g) g.addEventListener("click", () => openExternal("https://www.themoviedb.org/settings/api"));
   }
 }
 
@@ -2066,10 +2098,12 @@ async function loadTorboxStatus() {
       '<p class="muted">Not connected. Add your Torbox API key to enable debrid downloads.</p>' +
       '<input type="password" class="key-input" id="torbox-key" placeholder="Torbox API key" autocomplete="off" spellcheck="false">' +
       '<button class="btn" id="torbox-save">Save key</button> ' +
-      '<a class="muted" href="https://torbox.app" target="_blank" rel="noopener">Get a key</a>' +
+      '<button class="btn btn-ghost" id="torbox-getkey">Get a key</button>' +
       '<p class="trakt-msg muted" id="torbox-msg"></p>';
     const b = document.getElementById("torbox-save");
     if (b) b.addEventListener("click", saveTorboxKey);
+    const g = document.getElementById("torbox-getkey");
+    if (g) g.addEventListener("click", () => openExternal("https://torbox.app"));
   }
 }
 
@@ -2229,6 +2263,7 @@ async function boot() {
   renderHome();
   updateBackButton();
   startBadgePoll();
+  checkForUpdateOnStartup();
 }
 
 boot();
