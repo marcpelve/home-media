@@ -110,11 +110,10 @@ jobs:
           # tauri build did not sign the bundles, so sign them here.
           command -v tauri >/dev/null 2>&1 || npm install -g @tauri-apps/cli@v2
 
-          # Write the base64-encoded key to a temp file for --private-key-path.
-          # (The TAURI_SIGNING_PRIVATE_KEY env var is auto-detected as --private-key,
-          #  which conflicts with --private-key-path.)
+          # Write the key to a temp file for --private-key-path.
+          # TAURI_SIGNING_PRIVATE_KEY is already base64-encoded — write it as-is.
           KEY_FILE="$(mktemp)"
-          echo "$TAURI_SIGNING_PRIVATE_KEY" | base64 -d > "$KEY_FILE"
+          echo "$TAURI_SIGNING_PRIVATE_KEY" > "$KEY_FILE"
 
           # Create the updater zip (the .exe zipped) and sign both files.
           # Use Python's zipfile module — the Windows runner has no `zip` binary.
