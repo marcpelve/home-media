@@ -86,7 +86,9 @@ jobs:
         shell: bash
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
-          echo "Creating release for tag: $TAG"
+          # NSIS artifact names use the version without the leading "v".
+          VERSION="${TAG#v}"
+          echo "Creating release for tag: $TAG (version $VERSION)"
 
           BUNDLE="desktop/src-tauri/target/release/bundle"
           NSIS="$BUNDLE/nsis"
@@ -94,10 +96,10 @@ jobs:
           # Collect the files to upload
           FILES=()
           for f in \
-            "Home Media_0.1.1_x64-setup.exe" \
-            "Home Media_0.1.1_x64-setup.exe.sig" \
-            "Home Media_0.1.1_x64-setup.nsis.zip" \
-            "Home Media_0.1.1_x64-setup.nsis.zip.sig"; do
+            "Home Media_${VERSION}_x64-setup.exe" \
+            "Home Media_${VERSION}_x64-setup.exe.sig" \
+            "Home Media_${VERSION}_x64-setup.nsis.zip" \
+            "Home Media_${VERSION}_x64-setup.nsis.zip.sig"; do
             if [ -f "$NSIS/$f" ]; then
               FILES+=("$NSIS/$f")
             fi
