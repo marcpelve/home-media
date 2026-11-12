@@ -83,46 +83,52 @@ jobs:
 
       # tauri-action@v0 only uploads the main .exe and skips the signatures +
       # updater manifest, so upload those to the release it created here.
-      - name: Upload updater assets
+      - name: Sign and upload updater assets
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
           VERSION="${TAG#v}"
           NSIS="desktop/src-tauri/target/release/bundle/nsis"
           BUNDLE="desktop/src-tauri/target/release/bundle"
+          EXE="$NSIS/Home Media_${VERSION}_x64-setup.exe"
+          ZIP="$NSIS/Home Media_${VERSION}_x64-setup.nsis.zip"
 
           echo "PWD: $(pwd)"
-          echo "--- NSIS dir contents ---"
-          ls -la "$NSIS" || echo "(NSIS dir missing)"
+          echo "--- NSIS dir (before signing) ---"
+          ls -la "$NSIS" || { echo "::error::NSIS dir missing"; exit 1; }
 
-          # Signatures (names don't matter for the updater; upload as-is)
+          if [ ! -f "$EXE" ]; then
+            echo "::error::Installer not found: $EXE"
+            exit 1
+          fi
+
+          # tauri build did not sign the bundles, so sign them here.
+          command -v tauri >/dev/null 2>&1 || npm install -g @tauri-apps/cli@v2
+
+          # Create the updater zip (the .exe zipped) and sign both files.
+          ( cd "$NSIS" && zip -q "Home Media_${VERSION}_x64-setup.nsis.zip" "Home Media_${VERSION}_x64-setup.exe" )
+          tauri sign sign -f "$EXE" -p "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD}"
+          tauri sign sign -f "$ZIP" -p "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD}"
+
+          echo "--- NSIS dir (after signing) ---"
+          ls -la "$NSIS"
+
+          # Upload signatures + updater zip (dot-named to match the manifest URL).
           for f in \
             "Home Media_${VERSION}_x64-setup.exe.sig" \
             "Home Media_${VERSION}_x64-setup.nsis.zip.sig"; do
-            if [ -f "$NSIS/$f" ]; then
-              echo "Uploading: $f"
-              gh release upload "$TAG" "$NSIS/$f" --clobber
-            else
-              echo "::warning::Not found: $NSIS/$f"
-            fi
+            echo "Uploading: $f"
+            gh release upload "$TAG" "$NSIS/$f" --clobber
           done
-
-          # Updater zip: the asset name must match the URL in latest.json, which
-          # uses the NSIS dot convention (Home.Media), so copy to a dot-named
-          # file before uploading.
-          ZIP_SRC="$NSIS/Home Media_${VERSION}_x64-setup.nsis.zip"
           ZIP_DST="$BUNDLE/Home.Media_${VERSION}_x64-setup.nsis.zip"
-          if [ -f "$ZIP_SRC" ]; then
-            cp "$ZIP_SRC" "$ZIP_DST"
-            echo "Uploading: $(basename "$ZIP_DST")"
-            gh release upload "$TAG" "$ZIP_DST" --clobber
-          else
-            echo "::error::Not found: $ZIP_SRC"
-            exit 1
-          fi
+          cp "$ZIP" "$ZIP_DST"
+          echo "Uploading: $(basename "$ZIP_DST")"
+          gh release upload "$TAG" "$ZIP_DST" --clobber
 
           # Updater manifest (latest.json), built from the .nsis.zip signature.
           SIG=$(cat "$NSIS/Home Media_${VERSION}_x64-setup.nsis.zip.sig" | tr -d '[:space:]')
