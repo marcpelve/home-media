@@ -66,9 +66,9 @@ jobs:
         working-directory: desktop
         run: npm run build
 
-      # Build the NSIS installer and sign it with the minisign key.
-      # tauri-action handles the build + signing; the release upload is done
-      # in the next step because tauri-action@v0 silently skips uploads.
+      # Build the NSIS installer, sign it, create the GitHub release, and
+      # upload the signed artifacts + updater manifest. tauri-action handles
+      # all of this when given tagName + releaseName.
       - name: Build and sign installer
         uses: tauri-apps/tauri-action@v0
         env:
@@ -76,63 +76,10 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
+          projectPath: desktop/src-tauri
           tagName: ${{ github.ref_name }}
-          projectName: home-media
-          tauriDir: desktop/src-tauri
-          includeUpdaterManifest: true
+          releaseName: Home Media ${{ github.ref_name }}
+          uploadUpdaterJson: true
+          uploadUpdaterSignatures: true
 
-      # Create the GitHub Release and upload the signed artifacts.
-      - name: Create release and upload artifacts
-        shell: bash
-        run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          # NSIS artifact names use the version without the leading "v".
-          VERSION="${TAG#v}"
-          echo "Creating release for tag: $TAG (version $VERSION)"
 
-          BUNDLE="desktop/src-tauri/target/release/bundle"
-          NSIS="$BUNDLE/nsis"
-
-          # Collect the files to upload
-          FILES=()
-          for f in \
-            "Home Media_${VERSION}_x64-setup.exe" \
-            "Home Media_${VERSION}_x64-setup.exe.sig" \
-            "Home Media_${VERSION}_x64-setup.nsis.zip" \
-            "Home Media_${VERSION}_x64-setup.nsis.zip.sig"; do
-            if [ -f "$NSIS/$f" ]; then
-              FILES+=("$NSIS/$f")
-            fi
-          done
-
-          # Include the updater manifest if tauri-action generated one
-          for manifest in "$BUNDLE/latest.json" "$BUNDLE/updater-manifest.json"; do
-            if [ -f "$manifest" ]; then
-              FILES+=("$manifest")
-            fi
-          done
-
-          echo "Uploading: ${FILES[*]}"
-          echo "=== NSIS dir contents ==="
-          ls -la "$NSIS/" 2>&1
-
-          # Create the release via GitHub API
-          RELEASE_JSON=$(curl -s -X POST \
-            -H "Authorization: token $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/marcpelve/home-media/releases" \
-            -d "{\"tag_name\": \"$TAG\", \"target_commitish\": \"main\", \"name\": \"Home Media $TAG\", \"body\": \"Home Media $TAG - Install the .exe for Windows x64.\"}")
-
-          RELEASE_ID=$(echo "$RELEASE_JSON" | python -c "import sys,json; print(json.load(sys.stdin)['id'])")
-          echo "Created release ID: $RELEASE_ID"
-
-          # Upload each asset using gh (handles auth + URL encoding)
-          for f in "${FILES[@]}"; do
-            echo "Uploading: $(basename "$f")"
-            gh release upload "$TAG" "$f" --clobber 2>&1
-          done
-
-          echo "Release created: https://github.com/marcpelve/home-media/releases/tag/$TAG"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
