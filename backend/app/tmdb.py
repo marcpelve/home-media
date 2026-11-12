@@ -366,7 +366,9 @@ class TmdbClient:
         client = self._client
         if client is None:
             return None
-        resp = await client.get(url)
+        resp = await client.get(
+            url, headers={"Authorization": f"Bearer {self._effective_key()}"}
+        )
         resp.raise_for_status()
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(resp.content)
@@ -392,7 +394,10 @@ class TmdbClient:
         client = self._client
         if client is None:
             return None
-        resp = await client.get(f"https://image.tmdb.org/t/p/{size}{path}")
+        resp = await client.get(
+            f"https://image.tmdb.org/t/p/{size}{path}",
+            headers={"Authorization": f"Bearer {self._effective_key()}"},
+        )
         resp.raise_for_status()
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(resp.content)
