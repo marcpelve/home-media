@@ -1,43 +1,53 @@
 # Project Handoff: home-media
 
-**Date:** 2026-11-12 21:05
+**Date:** 2026-11-12 04:20
 **Branch:** main
-**Latest commit:** d11996f Sign NSIS bundles in workflow (tauri build does not sign)
+**Latest commit:** 1ad76a0 Enable devtools feature in release builds
 
 ## Done
-- Fixed the fresh-install crash: declared the vendored cfscrape runtime deps (`requests`, `urllib3`, `requests_toolbelt`, `pyparsing`, `pyaes`, `brotli`) in `backend/requirements.txt` (commit `57ad945`). A clean venv + PyInstaller build now resolves all imports (verified `urllib3` and `cfscrape` import OK).
-- Bumped app version to `0.1.2` in `tauri.conf.json` + `Cargo.toml` (commit `df256e1`).
-- Reworked `.github/workflows/release.yml` so the GitHub release carries all 5 assets: tauri-action creates the release + uploads the `.exe`; a follow-up step signs the NSIS bundles (creates `.nsis.zip` + `tauri sign`) and uploads `.exe.sig`, `.nsis.zip`, `.nsis.zip.sig`, and a generated `latest.json` (commits `2e2bba9`, `9e813f3`, `d11996f`).
-- Release `v0.1.2` is live on GitHub with the installer `Home.Media_0.1.2_x64-setup.exe` (testable now).
+- Fixed the GitHub release pipeline through 7 iterations (zip→zipfile, sign→signer, unset env var, remove base64 -d, printf, tr -d whitespace, regenerate signing key pair). Release v0.1.5 is live with all 5 assets.
+- Fixed fresh-install `PermissionError` on coco data dir: `_get_data_dir()` now uses `%LOCALAPPDATA%\Home Media\data\coco` (commit `5865b0e`).
+- Fixed tooltip hover gap with CSS `.svc-tip::before` invisible bridge (confirmed working).
+- Root-caused all JS Tauri API failures: `window.__TAURI__` is `undefined` in vanilla-JS Tauri webview. Added `tauriInvoke()` helper using `window.__TAURI_INTERNALS__.invoke()`.
+- Fixed Torbox auth 422: swapped router mount order so `torbox_router` `/auth` matches before `sources_router` `/{tmdb_id}` catch-all.
+- Fixed Trakt auth 502: OAuth device-code endpoints now use form-encoded bodies (`data=` + `_FORM_HEADERS`) instead of JSON.
+- Added `app_get_version` and `open_url` Rust commands (both were missing — JS was calling non-existent commands).
+- Added `open = "5"` crate dependency for the `open_url` command.
+- Enabled devtools in both `tauri.conf.json` and `Cargo.toml` for release builds.
+- Set up local build workflow with `run-build.bat` + Python venv at `backend/.venv`.
 
 ## Current state
-- `main` clean at `d11996f`, pushed. Tag `v0.1.2` on origin at `d11996f`.
-- Run `43138843131` (sign-bundles fix) is in-flight; the 4 updater assets (`.exe.sig`, `.nsis.zip`, `.nsis.zip.sig`, `latest.json`) are not yet on the release.
-- Fresh install of the `.exe` works (dep fix included). Auto-updater is inert until the 4 updater assets land on the release.
+- **Uncommitted changes** in working tree: `backend/app/main.py`, `backend/app/trakt.py`, `desktop/src-tauri/Cargo.toml`, `desktop/src-tauri/src/lib.rs`, `desktop/src/main.js`, `desktop/src-tauri/Cargo.lock`, `desktop/src-tauri/gen/schemas/*`
+- Local build works: `desktop/src-tauri/target/release/desktop.exe`
+- Verified in local build: get token/key buttons open browser, version shows in Updates panel, check button visible
+- NOT yet verified: Torbox auth save, Trakt device-code auth, console window elimination
+- Latest committed tag: `v0.1.5`
 
 ## Blockers
-- None hard. The in-flight run `43138843131` is the open item. If it fails, inspect the "Sign and upload updater assets" step (it logs a debug `ls` before/after signing).
+- None — all fixes are in place, need user verification + commit + push
 
 ## Next steps
-1. Check `gh run view 43138843131 --json status,conclusion`.
-2. On success: confirm `gh release view v0.1.2 --json assets` shows all 5 files.
-3. On failure: `gh run view 43138843131 --log-failed` — likely `tauri sign sign` (key/password, `tauri` CLI, or `zip`).
-4. User will land real app changes before v0.1.3; do not re-push v0.1.2 to re-test.
+1. User verifies Torbox auth save, Trakt auth, and console window in local build
+2. Commit all changes
+3. Bump version to 0.1.6, push to main, tag for release build
+4. Verify release build + auto-update end-to-end
 
 ## Key decisions
-- `tauri build` does NOT sign the NSIS bundles in this setup (produces only the `.exe` in every run). The workflow signs them manually (commit `d11996f`) — do not rely on tauri-action/`tauri build` signing.
-- `tauri-action@v0` uploads only the main `.exe`; its valid inputs are `projectPath`/`tagName`/`releaseName`/`includeUpdaterJson` (the dev-README names `uploadUpdaterJson`/`uploadUpdaterSignatures` are silently ignored by v0).
-- The `.nsis.zip` upload asset is dot-named (`Home.Media_…`) to match the `latest.json` URL, while the on-disk bundle files use a space (`Home Media_…`).
-- No self-hosted runner (user declined). The two stuck v0.1.1 runs (`43096541945`, `43095230132`) are harmless (no `concurrency` block).
-- No autonomous commit/PR rules apply to this repo (that's llama.cpp-specific); direct commits to `main` are fine for small, fully-diagnosed fixes.
+- **`window.__TAURI__` is undefined in vanilla JS** — use `window.__TAURI_INTERNALS__.invoke(cmd, args)` for all Tauri API calls
+- **Local build**: `cmd.exe /c "C:\Users\marcp\AppData\Local\hermes\cache\scratch\run-build.bat"`
+- **Backend rebuild**: `cd backend && .venv/Scripts/python.exe -m PyInstaller backend.spec --noconfirm --distpath dist`, copy `dist/home-media` → `desktop/src-tauri/resources/home-media`
+- **`desktop/dist/` is gitignored** — workflow's `npm run build` copies `src/` → `dist/`
+- **User requires approval before push/build**
+- **No secrets in handoffs** — reference by name only
+- Commit directly to main, concise messages, no AI attribution, no push/PR without being asked
 
 ## References
 - Repo: `C:\ai\repos\home-media`
 - GitHub: `https://github.com/marcpelve/home-media`
-- Release: `https://github.com/marcpelve/home-media/releases/tag/v0.1.2`
+- Latest release: `https://github.com/marcpelve/home-media/releases/tag/v0.1.5`
 - Workflow: `.github/workflows/release.yml`
-- Deps: `backend/requirements.txt`
 - Version files: `desktop/src-tauri/tauri.conf.json`, `desktop/src-tauri/Cargo.toml`
-- Bundle output: `desktop/src-tauri/target/release/bundle/nsis/`
-- Run IDs — in-flight `43138843131`; failed `43135921275`, `43137468384`; success(partial) `43134211623`; stuck v0.1.1 `43096541945`, `43095230132`
-- Commits this session: `57ad945`, `d06db76`, `df256e1`, `2e2bba9`, `9e813f3`, `d11996f`
+- Rust commands: `desktop/src-tauri/src/lib.rs` (`check_for_update`, `install_update`, `app_get_version`, `open_url`)
+- JS frontend: `desktop/src/main.js` (all Tauri calls via `tauriInvoke()`)
+- Backend routers: `backend/app/routers/` (sources, torbox, trakt, tmdb, downloads, play, library, collection)
+- Trakt client: `backend/app/trakt.py` (device-code flow, token rotation)
