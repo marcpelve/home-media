@@ -1863,7 +1863,7 @@ async function loadUpdatesStatus() {
     return;
   }
   let current = "";
-  try { current = await tauri.app.version(); } catch (_) { current = ""; }
+  try { current = await tauri.core.invoke("app_get_version"); } catch (_) { current = ""; }
   panel.innerHTML =
     '<h2>Updates</h2>' +
     '<p class="muted">Current version: ' + (current ? esc(current) : "unknown") + '</p>' +
