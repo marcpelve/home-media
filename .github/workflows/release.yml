@@ -111,7 +111,15 @@ jobs:
           command -v tauri >/dev/null 2>&1 || npm install -g @tauri-apps/cli@v2
 
           # Create the updater zip (the .exe zipped) and sign both files.
-          ( cd "$NSIS" && zip -q "Home Media_${VERSION}_x64-setup.nsis.zip" "Home Media_${VERSION}_x64-setup.exe" )
+          # Use Python's zipfile module — the Windows runner has no `zip` binary.
+          python -c "
+          import zipfile, os
+          nsis = '$NSIS'
+          exe = os.path.join(nsis, 'Home Media_${VERSION}_x64-setup.exe')
+          zip_path = os.path.join(nsis, 'Home Media_${VERSION}_x64-setup.nsis.zip')
+          with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as z:
+              z.write(exe)
+          "
           tauri sign sign -f "$EXE" -p "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD}"
           tauri sign sign -f "$ZIP" -p "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD}"
 
