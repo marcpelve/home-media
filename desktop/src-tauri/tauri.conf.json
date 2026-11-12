@@ -43,7 +43,7 @@
       "endpoints": [
         "https://github.com/marcpelve/home-media/releases/latest/download/{filename}"
       ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkzNTJDRTczQTE0QjEyRTEKUldUaEVrdWhjODVTazJBNWh4OEFaUVlmRkQzMUpYMysydW5HREJYaEQ1eGZONVd5V1B2d01Fb2EK"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU3RTU2QzZCOUNDOENEQTMKUldTanpjaWNhMnpsVjByL3ljMGhWci9CQ1hxb0JJQ3dJc0ZTK3RJWDRhVGZVSUxoSlRyTElUYXoK"
     }
   }
 }
