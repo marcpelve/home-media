@@ -79,7 +79,62 @@ jobs:
           projectPath: desktop/src-tauri
           tagName: ${{ github.ref_name }}
           releaseName: Home Media ${{ github.ref_name }}
-          uploadUpdaterJson: true
-          uploadUpdaterSignatures: true
+          includeUpdaterJson: false
+
+      # tauri-action@v0 only uploads the main .exe and skips the signatures +
+      # updater manifest, so upload those to the release it created here.
+      - name: Upload updater assets
+        shell: bash
+        working-directory: desktop/src-tauri
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+          NSIS="target/release/bundle/nsis"
+          BUNDLE="target/release/bundle"
+
+          # Signatures (names don't matter for the updater; upload as-is)
+          for f in \
+            "Home Media_${VERSION}_x64-setup.exe.sig" \
+            "Home Media_${VERSION}_x64-setup.nsis.zip.sig"; do
+            if [ -f "$NSIS/$f" ]; then
+              echo "Uploading: $f"
+              gh release upload "$TAG" "$NSIS/$f" --clobber
+            else
+              echo "::warning::Not found: $NSIS/$f"
+            fi
+          done
+
+          # Updater zip: the asset name must match the URL in latest.json, which
+          # uses the NSIS dot convention (Home.Media), so copy to a dot-named
+          # file before uploading.
+          ZIP_SRC="$NSIS/Home Media_${VERSION}_x64-setup.nsis.zip"
+          ZIP_DST="$BUNDLE/Home.Media_${VERSION}_x64-setup.nsis.zip"
+          if [ -f "$ZIP_SRC" ]; then
+            cp "$ZIP_SRC" "$ZIP_DST"
+            echo "Uploading: $(basename "$ZIP_DST")"
+            gh release upload "$TAG" "$ZIP_DST" --clobber
+          else
+            echo "::error::Not found: $ZIP_SRC"
+            exit 1
+          fi
+
+          # Updater manifest (latest.json), built from the .nsis.zip signature.
+          SIG=$(cat "$NSIS/Home Media_${VERSION}_x64-setup.nsis.zip.sig" | tr -d '[:space:]')
+          jq -n \
+            --arg version "$VERSION" \
+            --arg tag "$TAG" \
+            --arg sig "$SIG" \
+            --arg pub_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{version: $version, notes: ("Home Media v" + $version), pub_date: $pub_date, url: ("https://github.com/marcpelve/home-media/releases/download/" + $tag + "/Home.Media_" + $version + "_x64-setup.nsis.zip"), signature: $sig}' \
+            > "$BUNDLE/latest.json"
+          echo "latest.json:"
+          cat "$BUNDLE/latest.json"
+          echo "Uploading: latest.json"
+          gh release upload "$TAG" "$BUNDLE/latest.json" --clobber
+
+          echo "Release: https://github.com/marcpelve/home-media/releases/tag/$TAG"
 
 
