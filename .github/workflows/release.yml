@@ -126,6 +126,9 @@ jobs:
           with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as z:
               z.write(exe)
           "
+          # Unset the env var so the CLI doesn't auto-detect it as --private-key
+          # (conflicts with --private-key-path).
+          unset TAURI_SIGNING_PRIVATE_KEY
           tauri signer sign --private-key-path "$KEY_FILE" --password "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD}" "$EXE"
           tauri signer sign --private-key-path "$KEY_FILE" --password "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD}" "$ZIP"
           rm -f "$KEY_FILE"
