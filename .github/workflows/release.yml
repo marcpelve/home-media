@@ -113,7 +113,7 @@ jobs:
           # Write the key to a temp file for --private-key-path.
           # TAURI_SIGNING_PRIVATE_KEY is already base64-encoded — write it as-is.
           KEY_FILE="$(mktemp)"
-          printf '%s' "$TAURI_SIGNING_PRIVATE_KEY" > "$KEY_FILE"
+          printf '%s' "$TAURI_SIGNING_PRIVATE_KEY" | tr -d '[:space:]' > "$KEY_FILE"
 
           # Create the updater zip (the .exe zipped) and sign both files.
           # Use Python's zipfile module — the Windows runner has no `zip` binary.
