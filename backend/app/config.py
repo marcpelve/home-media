@@ -26,6 +26,11 @@ from pathlib import Path
 # Product name used for the persistent data directory.
 _DATA_DIR_NAME = "HomeMedia"
 
+# Public Trakt OAuth client id (PKCE, no client secret). Shipped as the
+# default so a fresh install can start the device-code flow without a
+# data-dir .env; a .env value still overrides it.
+_DEFAULT_TRAKT_CLIENT_ID = "yUrS0OHlSDyMrY6eEIMgd3XGk1TSHgUAGIuHdq4h02U"
+
 
 def _frozen() -> bool:
     """True when running from a PyInstaller bundle."""
@@ -157,7 +162,7 @@ def load_config(env_path: Path | None = None) -> Config:
     return Config(
         tmdb_read_access_token=env.get("TMDB_READ_ACCESS_TOKEN", ""),
         torbox_api_key=env.get("TORBOX_API_KEY", ""),
-        trakt_client_id=env.get("TRAKT_CLIENT_ID", ""),
+        trakt_client_id=env.get("TRAKT_CLIENT_ID", _DEFAULT_TRAKT_CLIENT_ID),
         download_dir=env.get("DOWNLOAD_DIR", _default_download_dir()),
         poster_dir=env.get("POSTER_DIR", _default_poster_dir()),
         mpv_path=env.get("MPV_PATH", _default_mpv_path()),
