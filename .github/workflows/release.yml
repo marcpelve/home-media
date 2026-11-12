@@ -120,8 +120,8 @@ jobs:
           with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as z:
               z.write(exe)
           "
-          tauri sign sign -f "$EXE" -p "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD}"
-          tauri sign sign -f "$ZIP" -p "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD}"
+          tauri signer sign -f "$EXE" -p "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD}"
+          tauri signer sign -f "$ZIP" -p "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD}"
 
           echo "--- NSIS dir (after signing) ---"
           ls -la "$NSIS"
