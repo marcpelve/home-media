@@ -1,3 +1,18 @@
 fastapi
 uvicorn
 httpx
+
+# Vendored cocoscrapers/cfscrape runtime deps. These are NOT pulled
+# transitively by fastapi/httpx, so they must be declared explicitly: the CI
+# build installs a clean venv from this file and runs PyInstaller against it,
+# so any missing package here is absent from the bundle and crashes the
+# packaged app at import time (e.g. urllib3 - needed by cfscrape and by
+# kodi_stub's DEFAULT_CIPHERS patch). Only the deps on the default code path
+# are listed; cfscrape's optional captcha solvers / alternate JS interpreters
+# (js2py, v8eval, *captcha) are imported on demand and intentionally omitted.
+requests
+urllib3
+requests_toolbelt
+pyparsing
+pyaes
+brotli
