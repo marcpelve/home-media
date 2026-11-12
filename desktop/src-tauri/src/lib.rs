@@ -63,6 +63,20 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![check_for_update, install_update, app_get_version, open_url])
         .setup(|app: &mut App| {
+            // If a backend is already serving on :8790 (a previous instance
+            // whose sidecar did not clean up), reuse it. Spawning a second
+            // sidecar would fail to bind the port and crash, leaving the
+            // frontend with no backend to reach. We don't own a reused
+            // backend, so store None (the on-close kill is then a no-op).
+            let backend_up = std::net::TcpStream::connect_timeout(
+                &"127.0.0.1:8790".parse().unwrap(),
+                std::time::Duration::from_millis(750),
+            )
+            .is_ok();
+            if backend_up {
+                app.manage(Mutex::new(None::<Child>));
+                return Ok(());
+            }
             // The backend ships as a PyInstaller one-dir bundle in the app's
             // resources: a home-media/ folder (exe + _internal/), no runtime
             // extraction, so it starts in a couple of seconds. Tauri may place
