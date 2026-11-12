@@ -24,7 +24,7 @@ function el(tag, cls, text) {
 
 function openExternal(url) {
   if (window.__TAURI__ && window.__TAURI__.core) {
-    window.__TAURI__.core.invoke("opener_open", { url });
+    window.__TAURI__.core.invoke("opener_open_url", { url });
   } else {
     window.open(url, "_blank");
   }
