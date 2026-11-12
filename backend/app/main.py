@@ -105,8 +105,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(tmdb_router)
-app.include_router(sources_router)
 app.include_router(torbox_router)
+app.include_router(sources_router)
 app.include_router(downloads_router)
 app.include_router(play_router)
 app.include_router(trakt_router)

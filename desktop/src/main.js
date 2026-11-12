@@ -15,6 +15,11 @@ async function api(path, opts) {
   return res.json();
 }
 
+console.log("[DEBUG] __TAURI__:", typeof window.__TAURI__);
+console.log("[DEBUG] __TAURI_INTERNALS__:", typeof window.__TAURI_INTERNALS__);
+console.log("[DEBUG] __TAURI_INTERNALS__.invoke:", typeof window.__TAURI_INTERNALS__?.invoke);
+console.log("[DEBUG] __TAURI_INTERNALS__ keys:", window.__TAURI_INTERNALS__ ? Object.keys(window.__TAURI_INTERNALS__) : "n/a");
+
 function el(tag, cls, text) {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
@@ -22,9 +27,17 @@ function el(tag, cls, text) {
   return n;
 }
 
+function tauriInvoke(cmd, args) {
+  const t = window.__TAURI_INTERNALS__ || window.__TAURI__?.core;
+  if (!t) return null;
+  return t.invoke(cmd, args);
+}
+
 function openExternal(url) {
-  if (window.__TAURI__ && window.__TAURI__.core) {
-    window.__TAURI__.core.invoke("opener_open_url", { url });
+  const p = tauriInvoke("open_url", { url });
+  if (p) {
+    p.then(() => console.log("[openExternal] success:", url))
+     .catch(err => console.error("[openExternal] FAILED:", err));
   } else {
     window.open(url, "_blank");
   }
@@ -400,13 +413,11 @@ function renderServiceStatus() {
 }
 
 async function checkForUpdateOnStartup() {
-  const tauri = window.__TAURI__;
-  if (!tauri || !tauri.core) return;
   try {
-    const update = await tauri.core.invoke("check_for_update");
-    updateAvailable = !!update;
+    const update = await tauriInvoke("check_for_update");
+    updateAvailable = (update === true);
     renderServiceStatus();
-  } catch (_) { /* network error — stay hidden */ }
+  } catch (e) { /* network error — stay hidden */ }
 }
 
 // One-time delegated handler: "Open Settings" from any status dot.
@@ -1857,13 +1868,13 @@ async function renderSettings() {
 async function loadUpdatesStatus() {
   const panel = document.getElementById("updates-panel");
   if (!panel) return;
-  const tauri = window.__TAURI__;
-  if (!tauri || !tauri.core) {
+  const hasTauri = !!(window.__TAURI_INTERNALS__ || window.__TAURI__?.core);
+  if (!hasTauri) {
     panel.innerHTML = '<h2>Updates</h2><p class="muted">Not available in this build.</p>';
     return;
   }
   let current = "";
-  try { current = await tauri.core.invoke("app_get_version"); } catch (_) { current = ""; }
+  try { current = await tauriInvoke("app_get_version"); } catch (e) { current = ""; }
   panel.innerHTML =
     '<h2>Updates</h2>' +
     '<p class="muted">Current version: ' + (current ? esc(current) : "unknown") + '</p>' +
@@ -1876,11 +1887,10 @@ async function loadUpdatesStatus() {
 async function checkForUpdate(panel) {
   const status = panel.querySelector("#upd-status");
   const installBtn = panel.querySelector("#upd-install");
-  const tauri = window.__TAURI__;
   status.textContent = "Checking for updates\u2026";
   installBtn.style.display = "none";
   try {
-    const update = await tauri.core.invoke("check_for_update");
+    const update = await tauriInvoke("check_for_update");
     if (!update) {
       status.textContent = "You're up to date.";
       return;
@@ -1891,7 +1901,7 @@ async function checkForUpdate(panel) {
       installBtn.disabled = true;
       status.textContent = "Downloading and installing\u2026";
       try {
-        await tauri.core.invoke("install_update");
+        await tauriInvoke("install_update");
         status.textContent = "Installed \u2014 restarting\u2026";
       } catch (e) {
         status.textContent = "Update failed: " + e;

@@ -203,12 +203,13 @@ class TraktClient:
         verifier, challenge = _pkce()
         resp = await client.post(
             f"{self._auth_host}/oauth/device/code",
-            json={
+            data={
                 "client_id": self._client_id,
                 "scope": SCOPES,
                 "code_challenge": challenge,
                 "code_challenge_method": "S256",
             },
+            headers=_FORM_HEADERS,
         )
         resp.raise_for_status()
         data = resp.json()
@@ -244,12 +245,13 @@ class TraktClient:
             client = self._client
             resp = await client.post(
                 f"{self._auth_host}/oauth/device/token",
-                json={
+                data={
                     "client_id": self._client_id,
                     "code": p["device_code"],
                     "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
                     "code_verifier": p["code_verifier"],
                 },
+                headers=_FORM_HEADERS,
             )
             if resp.status_code == 200:
                 data = resp.json()

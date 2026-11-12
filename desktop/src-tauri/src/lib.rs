@@ -45,11 +45,23 @@ async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Return the app version string.
+#[tauri::command]
+fn app_get_version(app: tauri::AppHandle) -> Result<String, String> {
+    Ok(app.package_info().version.to_string())
+}
+
+/// Open a URL in the default browser.
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    open::that(&url).map_err(|e| e.to_string())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![check_for_update, install_update])
+        .invoke_handler(tauri::generate_handler![check_for_update, install_update, app_get_version, open_url])
         .setup(|app: &mut App| {
             // The backend ships as a PyInstaller one-dir bundle in the app's
             // resources: a home-media/ folder (exe + _internal/), no runtime
