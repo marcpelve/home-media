@@ -2000,8 +2000,10 @@ async function startTraktAuth() {
   flow.innerHTML =
     '<p>Enter this code at the link, then approve:</p>' +
     '<div class="user-code">' + esc(res.user_code) + '</div>' +
-    '<a class="btn" href="' + esc(res.verification_url) + '" target="_blank" rel="noopener">Open ' + esc(res.verification_url) + '</a>' +
+    '<button class="btn" id="trakt-open-link">Open ' + esc(res.verification_url) + '</button>' +
     '<p class="trakt-msg muted">Waiting for approval&hellip;</p>';
+  const ob = document.getElementById("trakt-open-link");
+  if (ob) ob.addEventListener("click", () => openExternal(res.verification_url));
   pollTraktAuth();
 }
 
