@@ -1,53 +1,51 @@
 # Project Handoff: home-media
 
-**Date:** 2026-11-12 04:20
+**Date:** 2026-11-12 15:35
 **Branch:** main
-**Latest commit:** 1ad76a0 Enable devtools feature in release builds
+**Latest commit:** ce96d30 Bump version to 0.1.6
 
 ## Done
-- Fixed the GitHub release pipeline through 7 iterations (zip→zipfile, sign→signer, unset env var, remove base64 -d, printf, tr -d whitespace, regenerate signing key pair). Release v0.1.5 is live with all 5 assets.
-- Fixed fresh-install `PermissionError` on coco data dir: `_get_data_dir()` now uses `%LOCALAPPDATA%\Home Media\data\coco` (commit `5865b0e`).
-- Fixed tooltip hover gap with CSS `.svc-tip::before` invisible bridge (confirmed working).
-- Root-caused all JS Tauri API failures: `window.__TAURI__` is `undefined` in vanilla-JS Tauri webview. Added `tauriInvoke()` helper using `window.__TAURI_INTERNALS__.invoke()`.
-- Fixed Torbox auth 422: swapped router mount order so `torbox_router` `/auth` matches before `sources_router` `/{tmdb_id}` catch-all.
-- Fixed Trakt auth 502: OAuth device-code endpoints now use form-encoded bodies (`data=` + `_FORM_HEADERS`) instead of JSON.
-- Added `app_get_version` and `open_url` Rust commands (both were missing — JS was calling non-existent commands).
-- Added `open = "5"` crate dependency for the `open_url` command.
-- Enabled devtools in both `tauri.conf.json` and `Cargo.toml` for release builds.
-- Set up local build workflow with `run-build.bat` + Python venv at `backend/.venv`.
+- Fixed Trakt 502: `TRAKT_CLIENT_ID_DEFAULT` constant in `backend/app/config.py` (public PKCE client, safe to embed as default) — no `.env` needed in the frozen build.
+- Eliminated the console window: `#![windows_subsystem = "windows"]` in `desktop/src-tauri/src/main.rs`.
+- Fixed sidecar "address already in use": probe-and-reuse logic in `desktop/src-tauri/src/lib.rs` — if :8790 is already serving, reuse it instead of spawning a sidecar that crashes.
+- Fixed "localhost refused to connect": added `custom-protocol` to `desktop/src-tauri/Cargo.toml` features — without it, release builds navigate to `devUrl` (5173) instead of embedded assets.
+- Fixed Trakt "Open link" not opening: replaced `<a target="_blank">` with a `<button>` calling `openExternal()` (the webview swallows `<a target=_blank>`).
+- Fixed TMDB poster/backdrop proxy 500: `get_poster`/`get_image` in `backend/app/tmdb.py` now pass `headers={"Authorization": f"Bearer {self._effective_key()}"}` per-request (was reusing the httpx client's default header built from an empty token → `Illegal header value b'Bearer '`).
+- Bumped 0.1.5 → 0.1.6 and pushed to `origin/main`.
 
 ## Current state
-- **Uncommitted changes** in working tree: `backend/app/main.py`, `backend/app/trakt.py`, `desktop/src-tauri/Cargo.toml`, `desktop/src-tauri/src/lib.rs`, `desktop/src/main.js`, `desktop/src-tauri/Cargo.lock`, `desktop/src-tauri/gen/schemas/*`
-- Local build works: `desktop/src-tauri/target/release/desktop.exe`
-- Verified in local build: get token/key buttons open browser, version shows in Updates panel, check button visible
-- NOT yet verified: Torbox auth save, Trakt device-code auth, console window elimination
-- Latest committed tag: `v0.1.5`
+- v0.1.6 built (`desktop/src-tauri/target/release/desktop.exe` + sidecar `resources/home-media/home-media.exe`) and pushed to `origin/main`. Clean tree.
+- Verified working in the frozen app: no console window, backend sidecar launches, Trakt device-code auth end-to-end, hero/poster/backdrop images load, "Open link" opens in the OS browser.
+- **Sources BROKEN** — every title returns `{"sources":[],"count":0}`. Root cause is external (see Blockers), not a code regression.
+- Dev servers (killed at handoff): backend `uvicorn app.main:app` on 8790, frontend `desktop/serve_nocache.py 8791` serving `desktop/dist/` (sync `src/`→`dist/` first). User opens `http://localhost:8791`. **Not 5173.**
 
 ## Blockers
-- None — all fixes are in place, need user verification + commit + push
+- **Sources (external, not code):** the coco scrapers are walled.
+  - `1337x.to` → HTTP 403 Cloudflare managed challenge ("Just a moment…"); unsolvable by cfscrape 1.2.60 (vendored), cfscrape 2.1.1, or curl_cffi (all tested).
+  - `yts.mx`, `1337x.gs` → no DNS A record (dead/blocked; confirmed via Google DoH).
+  - Confirmed it's the sites, not the build: the venv (the "old way") fails identically. This is a recent Cloudflare flip (worked days ago, not now), not gradual hardening.
+- **Torbox search API (the clean fix) is unreachable:** `search-api.torbox.app` has no public A record (confirmed via Google + Cloudflare DoH). The search endpoints are NOT on the main `api.torbox.app` (404 with the key, via the backend's own httpx client, which CF accepts — `mylist` returns 14). So from this network we can't reach Torbox's search API.
 
 ## Next steps
-1. User verifies Torbox auth save, Trakt auth, and console window in local build
-2. Commit all changes
-3. Bump version to 0.1.6, push to main, tag for release build
-4. Verify release build + auto-update end-to-end
+1. Decide the sources path (user to choose): (a) chase the Torbox search API (confirm it's reachable from a different network/region, or ask Torbox), (b) headless-browser (Playwright + stealth) route to solve Cloudflare — high effort, low reliability, (c) park it.
+2. If (a): wire `POST /sources/{id}` to call `https://search-api.torbox.app/torrents/tmdb:{id}` (Bearer = user's Torbox key) instead of `coco_driver.scrape()`. Torbox search returns torrents by TMDB/IMDB id with cache status.
+3. Rebuild the backend (PyInstaller) → copy to `resources/home-media` → `cargo build --release` → verify sources return.
 
 ## Key decisions
-- **`window.__TAURI__` is undefined in vanilla JS** — use `window.__TAURI_INTERNALS__.invoke(cmd, args)` for all Tauri API calls
-- **Local build**: `cmd.exe /c "C:\Users\marcp\AppData\Local\hermes\cache\scratch\run-build.bat"`
-- **Backend rebuild**: `cd backend && .venv/Scripts/python.exe -m PyInstaller backend.spec --noconfirm --distpath dist`, copy `dist/home-media` → `desktop/src-tauri/resources/home-media`
-- **`desktop/dist/` is gitignored** — workflow's `npm run build` copies `src/` → `dist/`
-- **User requires approval before push/build**
-- **No secrets in handoffs** — reference by name only
-- Commit directly to main, concise messages, no AI attribution, no push/PR without being asked
+- **`custom-protocol` feature** is required for release builds to serve embedded assets (Tauri `build.rs`: `dev = !custom_protocol`).
+- **`openExternal()`** for OS-browser links; the webview swallows `<a target=_blank>`.
+- **Per-request `Bearer` header** for the TMDB image proxy — never trust the httpx client's default header.
+- **Sources root cause is external** — Cloudflare + dead DNS, not our code. Don't re-litigate.
+- **Dev server:** backend 8790 + frontend 8791 (`serve_nocache.py` serving `dist/`); the frontend is NOT 5173 (that's the Tauri `devUrl`, unused in browser testing).
+- **No secrets in handoffs** — reference by name only.
+- Commit directly to main, concise messages, no AI attribution, no push/PR without being asked.
 
 ## References
-- Repo: `C:\ai\repos\home-media`
-- GitHub: `https://github.com/marcpelve/home-media`
-- Latest release: `https://github.com/marcpelve/home-media/releases/tag/v0.1.5`
-- Workflow: `.github/workflows/release.yml`
+- Repo: `C:\ai\repos\home-media` · GitHub: `https://github.com/marcpelve/home-media` · latest tag `v0.1.6`
 - Version files: `desktop/src-tauri/tauri.conf.json`, `desktop/src-tauri/Cargo.toml`
-- Rust commands: `desktop/src-tauri/src/lib.rs` (`check_for_update`, `install_update`, `app_get_version`, `open_url`)
-- JS frontend: `desktop/src/main.js` (all Tauri calls via `tauriInvoke()`)
-- Backend routers: `backend/app/routers/` (sources, torbox, trakt, tmdb, downloads, play, library, collection)
-- Trakt client: `backend/app/trakt.py` (device-code flow, token rotation)
+- Sources flow: `backend/app/routers/sources.py` → `backend/app/coco_driver.py` → `backend/app/coco/cocoscrapers/…` (1337x.py, ytsmx.py, client.py, cfscrape/)
+- Torbox client: `backend/app/torbox.py` (base `https://api.torbox.app`; search is the separate `https://search-api.torbox.app`)
+- Trakt client: `backend/app/trakt.py` · config: `backend/app/config.py`
+- Frontend: `desktop/src/main.js` (`API = "http://127.0.0.1:8790"`) · `desktop/serve_nocache.py`
+- Build: `cd backend && ./.venv/Scripts/pyinstaller.exe backend.spec --noconfirm` → copy `dist/home-media` → `desktop/src-tauri/resources/home-media` → `cd desktop/src-tauri && cargo build --release`
+- Frozen config/data: `%LOCALAPPDATA%\HomeMedia\` (`.env` + `home_media.db`)
