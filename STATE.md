@@ -255,15 +255,17 @@ are uncancelable via API).
   does NOT handle release creation/upload (silently skips)
 - Release creation: `curl` to GitHub API (creates release)
 - Asset upload: `gh release upload` with `--clobber`
-- Filenames hardcoded to `0.1.1` in the upload step (will need updating
-  for each future version — consider parameterizing)
+- Asset filenames are version-aware: the upload step derives `VERSION`
+  from the tag (`${TAG#v}`), so no per-version edits are needed (the old
+  "hardcoded to 0.1.1" note is stale - resolved).
 
 ### To do when the queue clears
 1. Check if v0.1.1 run completed or timed out
 2. If timed out: delete tag `v0.1.1`, re-push to retrigger
 3. Verify release has all 4 assets + manifest
 4. Test the in-app updater: install v0.1.0, check for update -> v0.1.1
-5. Consider parameterizing the version in the workflow (derive from tag)
+5. (Done) The workflow derives the version from the tag - no further
+   parameterization needed.
 
 ## Clean-machine handoff (the one thing that can't be done here)
 Copy one installer to a fresh Windows box (no prior Home Media install, no
