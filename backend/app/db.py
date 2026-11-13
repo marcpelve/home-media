@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS titles (
     first_air_date TEXT,
     status        TEXT,
     added_at      TEXT DEFAULT (datetime('now')),
-    updated_at    TEXT DEFAULT (datetime('now'))
+    updated_at    TEXT DEFAULT (datetime('now')),
+    device        TEXT
 );
 
 CREATE TABLE IF NOT EXISTS episodes (
@@ -47,7 +48,8 @@ CREATE TABLE IF NOT EXISTS watch_progress (
     duration_ms   INTEGER NOT NULL DEFAULT 0,
     completed     INTEGER NOT NULL DEFAULT 0,
     completed_at  TEXT,
-    updated_at    TEXT DEFAULT (datetime('now'))
+    updated_at    TEXT DEFAULT (datetime('now')),
+    device        TEXT
 );
 
 CREATE TABLE IF NOT EXISTS sources_cache (
@@ -103,6 +105,34 @@ CREATE TABLE IF NOT EXISTS tmdb_cache (
 """
 
 
+def _migrate_device_column(conn: sqlite3.Connection) -> None:
+    """Add a nullable ``device`` column to titles/watch_progress if absent.
+
+    Idempotent: on a fresh DB the column is created by the schema and this
+    is a no-op. On a legacy DB the column is missing, so we ALTER it in and,
+    on that transition only, backfill the pre-existing NULL rows with the
+    configured ``device_id`` (falling back to ``'default'``) and stamp
+    ``updated_at``. Stamping establishes a clean cutover baseline for the
+    first cloud push (PLAN.md S16 P-M1); rows already carrying a device are
+    left untouched, and re-running init never re-stamps them.
+    """
+    for table in ("titles", "watch_progress"):
+        cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if "device" not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN device TEXT")
+            conn.execute(
+                f"""
+                UPDATE {table}
+                SET device = COALESCE(
+                        (SELECT value FROM settings WHERE key = 'device_id'),
+                        'default'
+                    ),
+                    updated_at = datetime('now')
+                WHERE device IS NULL
+                """
+            )
+
+
 def init_db(db_path: str | Path) -> None:
     """Create the data directory (if needed) and all tables (if not present)."""
     path = Path(db_path)
@@ -110,6 +140,7 @@ def init_db(db_path: str | Path) -> None:
     conn = sqlite3.connect(str(path))
     try:
         conn.executescript(_SCHEMA)
+        _migrate_device_column(conn)
         conn.commit()
     finally:
         conn.close()
