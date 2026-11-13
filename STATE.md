@@ -238,6 +238,17 @@ Full design: PLAN.md. This file tracks multi-session progress.
   statically analyzed, so the coco tree's stdlib imports must be listed
   explicitly). Rebuilt the one-dir backend (POST /sources/157336 -> 103
   results with Torbox cached flags) and the full Tauri app. Commit 9095fcf.
+- (2026-11-13) P-M1 (Trakt -> cloud-storage sync migration, PLAN.md S16):
+  schema retrofit. Added a nullable `device` column to `titles` and
+  `watch_progress`: in `_SCHEMA` for fresh DBs, plus an idempotent
+  `_migrate_device_column` called from `init_db` that, on a legacy DB, ALTERs
+  the column in on the transition only (PRAGMA table_info check) and
+  backfills the pre-existing NULL rows — device from `settings.device_id`
+  (fallback `'default'`) and `updated_at` stamped to the migration baseline
+  (clean cutover point for the first cloud push). Rows already carrying a
+  device are never touched, and re-running init never re-stamps. 4 new tests
+  (fresh schema, legacy migrate+backfill, settings device_id honored,
+  idempotency). 140 tests pass. Commit 08b4dda.
 
 ## Session endpoint (2026-11-11) — GitHub release pipeline
 
