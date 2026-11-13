@@ -9,9 +9,9 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
-import json
 import sqlite3
 import time
+import urllib.parse
 from pathlib import Path
 
 import httpx
@@ -214,10 +214,15 @@ def test_device_flow_sends_pkce_pair(tmp_path: Path):
     db_path = _db(tmp_path)
     captured: dict = {}
 
+    def _form(request: httpx.Request) -> dict:
+        # The device-code and token requests are form-encoded (per Trakt's API),
+        # not JSON, so parse the query-string body into a flat dict.
+        return {k: v[0] for k, v in urllib.parse.parse_qs(request.content.decode()).items()}
+
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.host == "auth.trakt.tv":
             if request.url.path == "/oauth/device/code":
-                captured["code"] = json.loads(request.content)
+                captured["code"] = _form(request)
                 return httpx.Response(
                     200,
                     json={
@@ -228,7 +233,7 @@ def test_device_flow_sends_pkce_pair(tmp_path: Path):
                     },
                 )
             if request.url.path == "/oauth/device/token":
-                captured["token"] = json.loads(request.content)
+                captured["token"] = _form(request)
                 return httpx.Response(
                     400, json={"error": "authorization_pending"}
                 )
