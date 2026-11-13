@@ -134,8 +134,10 @@ async def push_progress(client: TraktClient, db_path) -> int:
         ).fetchall()
         pushed = 0
         for row in rows:
+            # watch_progress is keyed by tmdb_id app-wide (the frontend only
+            # knows TMDB ids), so resolve the title by tmdb_id, not titles.id.
             title = conn.execute(
-                "SELECT * FROM titles WHERE id = ?", (row["title_id"],)
+                "SELECT * FROM titles WHERE tmdb_id = ?", (row["title_id"],)
             ).fetchone()
             if title is None:
                 continue
@@ -180,12 +182,14 @@ async def pull_progress(client: TraktClient, db_path) -> tuple[int, list[str]]:
                 title = _local_title_by_tmdb(conn, int(tmdb_id))
                 if title is None:
                     continue
-                row = _find_progress(conn, title["id"], None, None)
+                # Keyed by tmdb_id app-wide (the frontend only knows TMDB ids),
+                # so match/insert on tmdb_id, not titles.id.
+                row = _find_progress(conn, int(tmdb_id), None, None)
                 if row is None:
                     conn.execute(
                         "INSERT INTO watch_progress (title_id, position_ms, "
                         "duration_ms, completed) VALUES (?, 0, 0, 1)",
-                        (title["id"],),
+                        (int(tmdb_id),),
                     )
                     merged += 1
                 elif not row["completed"]:
@@ -205,13 +209,14 @@ async def pull_progress(client: TraktClient, db_path) -> tuple[int, list[str]]:
                     continue
                 season = node.get("season")
                 number = node.get("number")
-                row = _find_progress(conn, title["id"], season, number)
+                # Keyed by tmdb_id app-wide (see movie branch).
+                row = _find_progress(conn, int(show_tmdb), season, number)
                 if row is None:
                     conn.execute(
                         "INSERT INTO watch_progress (title_id, season, episode, "
                         "position_ms, duration_ms, completed) "
                         "VALUES (?, ?, ?, 0, 0, 1)",
-                        (title["id"], season, number),
+                        (int(show_tmdb), season, number),
                     )
                     merged += 1
                 elif not row["completed"]:

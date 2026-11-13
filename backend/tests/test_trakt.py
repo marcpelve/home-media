@@ -421,17 +421,18 @@ def test_429_retry(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 def test_push_progress_scrobbles_local_rows(trakt_env):
+    """watch_progress.title_id holds the TMDB id (how the app writes it); push
+    must resolve the title by tmdb_id and scrobble it."""
     client = trakt_env["client"]
     db = trakt_env["db"]
     conn = sqlite3.connect(db)
     conn.execute(
         "INSERT INTO titles (tmdb_id, type, title) VALUES (155, 'movie', 'T')"
     )
-    title_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     conn.execute(
         "INSERT INTO watch_progress (title_id, position_ms, duration_ms) "
         "VALUES (?, 1000, 60000)",
-        (title_id,),
+        (155,),  # TMDB id, not the local titles.id
     )
     conn.commit()
     conn.close()
@@ -464,7 +465,6 @@ def test_pull_progress_merges_episode_from_history(tmp_path: Path):
     conn.execute(
         "INSERT INTO titles (tmdb_id, type, title) VALUES (66732, 'tv', 'S')"
     )
-    title_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     conn.commit()
     conn.close()
     state = {"scrobbles": []}
@@ -498,7 +498,7 @@ def test_pull_progress_merges_episode_from_history(tmp_path: Path):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     row = conn.execute(
-        "SELECT * FROM watch_progress WHERE title_id = ?", (title_id,)
+        "SELECT * FROM watch_progress WHERE title_id = ?", (66732,)
     ).fetchone()
     conn.close()
     assert row is not None
@@ -513,7 +513,6 @@ def test_pull_progress_marks_watched_movie_completed(tmp_path: Path):
     conn.execute(
         "INSERT INTO titles (tmdb_id, type, title) VALUES (155, 'movie', 'T')"
     )
-    title_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     conn.commit()
     conn.close()
     state = {"scrobbles": []}
@@ -539,7 +538,7 @@ def test_pull_progress_marks_watched_movie_completed(tmp_path: Path):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     row = conn.execute(
-        "SELECT * FROM watch_progress WHERE title_id = ?", (title_id,)
+        "SELECT * FROM watch_progress WHERE title_id = ?", (155,)
     ).fetchone()
     conn.close()
     assert row is not None
