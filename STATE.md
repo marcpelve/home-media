@@ -197,6 +197,21 @@ Full design: PLAN.md. This file tracks multi-session progress.
   ease-in-out opacity pulse on .svc-dot draws the eye to a problem service;
   the animation pauses on hover so the tooltip reads cleanly, and is disabled
   under prefers-reduced-motion.
+- (2026-11-12) Sources working again + piratebay fix. The "no sources for
+  every title" blocker was a transient window, not a code or network fault:
+  the recent Cloudflare flip walled 1337x.to (confirmed a *managed* challenge
+  - even curl_cffi with full Chrome/Safari/Firefox browser impersonation gets
+  403 "Just a moment" from this IP), and the other trackers were flaky in the
+  same window. Now the working providers are reachable: torrentio, kickass2,
+  torrentdownload, knaben, bitcq all return results. Real e2e via POST
+  /sources: Interstellar (157336) -> 102 sources, Shawshank (278) -> 53, all
+  4K/DV/HDR, most cached=True on Torbox. Fixed a real bug in the vendored
+  piratebay.py: a redundant local `from cocoscrapers.modules import log_utils`
+  inside sources() shadowed the module-level import, so log_utils was unbound
+  on the 200-response path and the trailing stats log raised
+  UnboundLocalError, killing the whole provider (0 results). Removed the local
+  import (commit 88b0242); piratebay now returns 80 sources for Interstellar.
+  Bumped to 0.1.7.
 
 ## Session endpoint (2026-11-11) — GitHub release pipeline
 
