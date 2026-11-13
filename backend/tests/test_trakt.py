@@ -96,9 +96,11 @@ def _make_handler(
                 )
             return httpx.Response(404, json={})
         if host == "api.trakt.tv":
-            if path.endswith("/items/history"):
+            if path.endswith("/scrobble/stop"):
                 state["scrobbles"].append(request)
-                return httpx.Response(200, json=[{"id": 1, "type": "movie"}])
+                return httpx.Response(
+                    201, json={"id": 1, "type": "movie", "action": "scrobble"}
+                )
             if path.endswith("/progress/watched"):
                 return httpx.Response(200, json=progress_payload)
             if path.endswith("/movies/watched"):
@@ -374,9 +376,12 @@ def test_mark_watched_sends_bearer(trakt_env):
         async with client:
             return await client.mark_watched(
                 {
-                    "played_at": "2026-01-01T00:00:00Z",
-                    "type": "movie",
-                    "movie": {"ids": {"tmdb": 155}},
+                    "progress": 100,
+                    "movie": {
+                        "title": "Star Wars: Episode I",
+                        "year": 1999,
+                        "ids": {"tmdb": 155},
+                    },
                 }
             )
 
@@ -384,7 +389,7 @@ def test_mark_watched_sends_bearer(trakt_env):
     assert isinstance(result, list)
     scrob = state["scrobbles"][0]
     assert scrob.headers.get("authorization") == "Bearer at1"
-    assert scrob.url.path == f"/users/{USER}/items/history"
+    assert scrob.url.path == "/scrobble/stop"
 
 
 def test_429_retry(tmp_path: Path):

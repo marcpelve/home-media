@@ -350,12 +350,17 @@ class TraktClient:
         return await self._request_with_retry("POST", path, headers=headers, json=json_body)
 
     async def mark_watched(self, item: dict) -> list:
-        """Scrobble one item (movie or episode) to history."""
-        username = self._username()
-        resp = await self._authed_post(f"/users/{username}/items/history", [item])
+        """Scrobble one item (movie or episode) as finished via /scrobble/stop.
+
+        progress 100 marks it watched. A 409 means it was just scrobbled
+        (duplicate) — treat as success so re-syncs stay idempotent.
+        """
+        resp = await self._authed_post("/scrobble/stop", item)
+        if resp.status_code == 409:
+            return []
         resp.raise_for_status()
         data = resp.json()
-        return data if isinstance(data, list) else []
+        return data if isinstance(data, list) else [data]
 
     async def get_watched_movies(self) -> list:
         username = self._username()

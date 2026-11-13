@@ -104,19 +104,36 @@ def _progress_ms(node: dict, entry: dict) -> tuple[int, int]:
     return position_ms, duration_ms
 
 
-def _history_item(title: sqlite3.Row, season: int | None, episode: int | None) -> dict | None:
-    """Build a Trakt items/history entry from a local title + episode coords."""
+def _scrobble_node(title: sqlite3.Row, season: int | None, episode: int | None) -> dict | None:
+    """Build a Trakt scrobble body (progress 100 = watched) from a local title.
+
+    /scrobble/stop takes a single {progress, movie|episode} object. Movies need
+    title + year + ids; episodes need season + number + the show's ids (Trakt
+    resolves the episode from show-tmdb + season + number).
+    """
     if not title["tmdb_id"]:
         return None
     ids: dict = {"tmdb": title["tmdb_id"]}
     if title["imdb_id"]:
         ids["imdb"] = title["imdb_id"]
-    item: dict = {"played_at": _now_iso(), "type": title["type"]}
     if title["type"] == "movie":
-        item["movie"] = {"ids": ids}
-    else:
-        item["episode"] = {"ids": ids, "season": season or 1, "number": episode or 1}
-    return item
+        return {
+            "progress": 100,
+            "movie": {
+                "title": title["title"],
+                "year": title["year"] or 0,
+                "ids": ids,
+            },
+        }
+    return {
+        "progress": 100,
+        "episode": {
+            "season": season or 1,
+            "number": episode or 1,
+            "ids": dict(ids),
+            "show": {"ids": dict(ids)},
+        },
+    }
 
 
 async def push_progress(client: TraktClient, db_path) -> int:
@@ -141,7 +158,7 @@ async def push_progress(client: TraktClient, db_path) -> int:
             ).fetchone()
             if title is None:
                 continue
-            item = _history_item(title, row["season"], row["episode"])
+            item = _scrobble_node(title, row["season"], row["episode"])
             if item is None:
                 continue
             await client.mark_watched(item)
