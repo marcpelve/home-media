@@ -385,3 +385,90 @@ P6 Packaging
 - Torbox API key + plan tier (for P2 testing).
 - TMDB API key (free, from themoviedb.org settings).
 - Default download directory (e.g., a media folder on each machine).
+
+## 16. Migration: Trakt -> Cloud-Storage Sync (appended)
+
+Status: PLANNED - not yet executed. Supersedes the Trakt-sync portions of S7
+(watch tracking model), S8.2 (Trakt endpoints), and P4 (Trakt tracking +
+sync). The local DB stays the live source of truth; Trakt is reduced to a
+one-time import; the shared record moves from Trakt to a per-title cloud
+file behind a storage adapter.
+
+Why: the Trakt dev app holds only `public offline_access` (no `scrobble:post`),
+so push-to-Trakt is blocked with no self-serve or proven grant path, and
+production access requires premium (rejected). A cloud file is offline-first,
+portable, machine-agnostic (OAuth, no per-machine daemon), and swappable
+(Drive -> B2 -> local folder).
+
+Model:
+- Local DB = live, offline-first, per-machine peer (NOT a disposable cache).
+  It doubles as the offline outbox - no separate outbox file.
+- Cloud = one file per title (metadata + watch state), the shared durable
+  record. A fresh machine pulling the folder gets library + watch state.
+- Sync = bidirectional last-write-wins merge by `updated_at`.
+- Storage adapter (`backend/app/storage.py`): `LocalFolder` + `Drive`
+  (OAuth, personal) backends behind one interface. Transport is swappable.
+
+Phases (each stops cleanly; one commit per phase; no push to origin):
+
+P-M0 Decisions (no code)
+  - Confirm: Google Drive via OAuth (personal); folder = My Drive/HomeMedia/.
+  - Confirm: stable per-machine device id (configured, not hostname).
+  - Confirm: versioned per-title file format (metadata + watch state).
+  - One-time manual: Google Cloud project + OAuth desktop client + enable
+    Drive API. The app consumes the credentials.
+
+P-M1 Schema retrofit (additive, safe)
+  - Add `device` to watch_progress and titles (updated_at already in S7).
+  - Backfill existing rows: updated_at = baseline now, device = machine id.
+  - db.py: idempotent ALTER TABLE ADD COLUMN with defaults. No data loss.
+
+P-M2 Storage adapter (new backend/app/storage.py)
+  - Interface: list_titles(), read_title(key), write_title(key, data),
+    delete_title(key) (optional).
+  - LocalFolderBackend: per-title JSON in movies/, shows/.
+  - DriveBackend: OAuth (personal) + Drive API, same folder layout.
+  - Shared versioned per-title JSON schema. Config: backend + connection.
+  - Tests: write->read round-trip (LocalFolder temp dir; Drive mocked).
+
+P-M3 Sync engine (rewrite backend/app/sync.py)
+  - pull(): cloud -> merge into DB (LWW by updated_at).
+  - push(title_key): DB state -> cloud file.
+  - merge(): LWW per title/episode (later updated_at wins).
+  - Sync button = pull() + push pending. Debounce progress pushes.
+  - Deprecate (not delete) the Trakt /scrobble/stop push path.
+  - Tests: LWW cases, pull->DB, push->cloud (mock).
+
+P-M4 Hooks + config (small)
+  - Startup: pull() + merge (offline-safe).
+  - State change: update DB (updated_at, device) + push(title_key) debounced.
+  - Settings: backend selection, device id, Drive "Connect" (OAuth flow ->
+    store refresh token), sync status.
+  - Offline: changes land in DB, push on next successful sync.
+
+P-M5 One-time Trakt import (preserve the past)
+  - "Import from Trakt": get_history() -> map to titles + watch_progress by
+    TMDB id -> write into DB (and thus the cloud). Reuses trakt.py.
+  - After this, Trakt is optional (no ongoing sync).
+
+P-M6 Cutover + verification
+  - DB intact post-schema (titles + watch_progress rows unchanged).
+  - Round-trip across two simulated machines (two LocalFolderBackends).
+  - Offline: cloud down -> local works; changes persist; sync when back.
+  - Import: Trakt history lands in DB. Conflict: LWW correct.
+  - Add test_storage.py + test_sync.py; update test_trakt.py (import-only).
+
+P-M7 Rollback / safety
+  - Schema additive -> no data loss. Trakt code kept (import) -> reversible.
+  - Cloud additive -> a failure never touches the local DB.
+  - Rollback = disable cloud sync, re-enable Trakt push (if scope opens).
+
+What does NOT change:
+- Local DB tables (titles, watch_progress) - additive columns only.
+- TMDB-id keying; watch.py dumb store; trakt.py client (kept for import).
+
+Risks / open items:
+- Google OAuth setup (project + client) is the one non-code manual step.
+- LWW merge is the one design surface that most needs to be right.
+- Refresh token copied to new machines (config) - same as existing auths.
+- Drive rate limits non-binding at watch-state frequency; debounce keeps it low.
