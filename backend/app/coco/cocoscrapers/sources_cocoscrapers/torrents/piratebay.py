@@ -56,7 +56,6 @@ class source:
 			if not results: return sources
 			if results[1] in ('200', '201'): files = jsloads(results[0])
 			else:
-				from cocoscrapers.modules import log_utils
 				log_utils.log('PIRATEBAY: Failed query for (%s) : %s' % (url, results))
 				return sources
 			undesirables = source_utils.get_undesirables()
