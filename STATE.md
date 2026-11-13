@@ -223,6 +223,21 @@ Full design: PLAN.md. This file tracks multi-session progress.
   most-recent one. Added test_watch_list_groups_by_show. Also fixed a
   pre-existing test bug in test_trakt.py (device-flow mock parsed JSON, but the
   client sends form-encoded bodies). 136 tests pass. Commits e14bc80 + 0cfaeaa.
+- (2026-11-12) Sources in the FROZEN exe: bundle the coco tree as on-disk data
+  so walk_packages finds the sources. The "no sources available" in the built
+  app was NOT a Cloudflare window (the dev venv returned 96+33 results at the
+  same time). Root cause: cocoscrapers.sources() discovers its per-source
+  modules at runtime via walk_packages() — a FILESYSTEM walk of
+  sources_cocoscrapers. When the package was bundled as PYZ modules
+  (compressed in the archive, not on disk), walk_packages found none, so every
+  source came back "disabled" and /sources returned 0 in the frozen exe while
+  the dev venv (source tree on disk) worked. Fix in backend.spec: bundle the
+  coco tree as ON-DISK data files (datas=[(app/coco/cocoscrapers,
+  "cocoscrapers")], excludes=["cocoscrapers"]) so walk_packages can see the
+  modules, and add xml.dom.minidom to hiddenimports (on-disk files are not
+  statically analyzed, so the coco tree's stdlib imports must be listed
+  explicitly). Rebuilt the one-dir backend (POST /sources/157336 -> 103
+  results with Torbox cached flags) and the full Tauri app. Commit 9095fcf.
 
 ## Session endpoint (2026-11-11) — GitHub release pipeline
 
