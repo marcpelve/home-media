@@ -212,6 +212,17 @@ Full design: PLAN.md. This file tracks multi-session progress.
   UnboundLocalError, killing the whole provider (0 results). Removed the local
   import (commit 88b0242); piratebay now returns 80 sources for Interstellar.
   Bumped to 0.1.7.
+- (2026-11-12) Continue Watching: one card per show, resume at the first
+  unwatched episode. `GET /watch` (routers/library.py `watch_list`) now groups
+  watch_progress rows by title: a TV show with several episodes in progress
+  yields a single card whose resume target is the first (lowest season, then
+  episode) not-yet-completed episode, and a show/movie whose started items are
+  all complete drops out of the row entirely. The frontend (desktop/src/main.js)
+  passes the card's resume season/episode through navPush -> openDetail so
+  clicking the card opens that episode directly instead of re-deriving the
+  most-recent one. Added test_watch_list_groups_by_show. Also fixed a
+  pre-existing test bug in test_trakt.py (device-flow mock parsed JSON, but the
+  client sends form-encoded bodies). 136 tests pass. Commits e14bc80 + 0cfaeaa.
 
 ## Session endpoint (2026-11-11) — GitHub release pipeline
 
