@@ -263,3 +263,46 @@ def test_delete_library_episode(tmp_path):
         assert by_id == {456}
         assert not media.exists()
         assert movie.exists()
+
+
+def test_watch_list_groups_by_show(tmp_path):
+    """Continue Watching: one card per show; resume = first unwatched episode;
+    fully-watched titles drop out."""
+    db_path = tmp_path / "cw.db"
+    init_db(db_path)
+    conn = sqlite3.connect(db_path)
+    # Show 1: two episodes in progress -> one card at S01E01 (the first).
+    conn.execute("INSERT INTO watch_progress (title_id, season, episode, position_ms, duration_ms, completed) VALUES (1, 1, 1, 5000, 60000, 0)")
+    conn.execute("INSERT INTO watch_progress (title_id, season, episode, position_ms, duration_ms, completed) VALUES (1, 1, 2, 10000, 60000, 0)")
+    # Show 2: all episodes complete -> excluded.
+    conn.execute("INSERT INTO watch_progress (title_id, season, episode, position_ms, duration_ms, completed) VALUES (2, 1, 1, 60000, 60000, 1)")
+    conn.execute("INSERT INTO watch_progress (title_id, season, episode, position_ms, duration_ms, completed) VALUES (2, 1, 2, 60000, 60000, 1)")
+    # Show 3: E1 complete, E2 in progress -> one card at S01E02.
+    conn.execute("INSERT INTO watch_progress (title_id, season, episode, position_ms, duration_ms, completed) VALUES (3, 1, 1, 60000, 60000, 1)")
+    conn.execute("INSERT INTO watch_progress (title_id, season, episode, position_ms, duration_ms, completed) VALUES (3, 1, 2, 7000, 60000, 0)")
+    # Movie 4: in progress -> one card.
+    conn.execute("INSERT INTO watch_progress (title_id, season, episode, position_ms, duration_ms, completed) VALUES (4, NULL, NULL, 12000, 90000, 0)")
+    # Movie 5: complete -> excluded.
+    conn.execute("INSERT INTO watch_progress (title_id, season, episode, position_ms, duration_ms, completed) VALUES (5, NULL, NULL, 90000, 90000, 1)")
+    conn.commit()
+    conn.close()
+
+    class MockTMDB:
+        async def title(self, tmdb_id):
+            return {"title": f"Title {tmdb_id}", "_type": "movie" if tmdb_id >= 4 else "tv"}
+
+    with TestClient(app) as client:
+        # Set state inside the context: the app lifespan (entered here) resets
+        # db_path and tmdb_client, so this must run after it.
+        app.state.db_path = str(db_path)
+        app.state.tmdb_client = MockTMDB()
+        items = client.get("/watch").json()["items"]
+    by_id = {it["title_id"]: it for it in items}
+    # Only the not-finished titles appear.
+    assert set(by_id) == {1, 3, 4}
+    # Show 1 -> one card, resume at the first (lowest) unwatched episode S01E01.
+    assert by_id[1]["season"] == 1 and by_id[1]["episode"] == 1
+    # Show 3 -> resume at S01E02 (E1 is already complete).
+    assert by_id[3]["season"] == 1 and by_id[3]["episode"] == 2
+    # Movie 4 -> its saved position is carried through.
+    assert by_id[4]["position_ms"] == 12000

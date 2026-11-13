@@ -19,11 +19,14 @@ router = APIRouter(prefix="/watch", tags=["library"])
 
 @router.get("")
 async def watch_list(request: Request):
-    """Continue Watching: recent local progress, newest first.
+    """Continue Watching: one card per show/movie, most-recently-touched first.
 
-    Each row is enriched with the title's name/type/poster from TMDB. Titles
-    that cannot be resolved (offline, unknown id) are skipped so the row still
-    renders the rest.
+    A TV show with several episodes in progress yields a single card whose
+    resume target is the first (lowest season, then episode) not-yet-completed
+    episode that has a progress row. A show whose started episodes are all
+    complete drops out of the row entirely. A movie is a single card while it
+    is incomplete. Titles that cannot be resolved (offline, unknown id) are
+    skipped so the row still renders the rest.
     """
     conn = sqlite3.connect(request.app.state.db_path)
     conn.row_factory = sqlite3.Row
@@ -36,24 +39,53 @@ async def watch_list(request: Request):
     finally:
         conn.close()
 
+    # Group rows by title. Rows arrive most-recent-first, so each title's first
+    # row is its most recent and the dict's insertion order is the display order.
+    by_title = {}
+    for r in rows:
+        by_title.setdefault(r["title_id"], []).append(r)
+
     client = request.app.state.tmdb_client
     items = []
-    for r in rows:
+    for title_id, trows in by_title.items():
+        ep_rows = [
+            r for r in trows
+            if r["season"] is not None and r["episode"] is not None
+        ]
+        movie_row = next(
+            (r for r in trows if r["season"] is None and r["episode"] is None),
+            None,
+        )
+
+        if ep_rows:
+            # Resume target: the first not-yet-completed episode (lowest S/E).
+            # If every started episode is complete, the show is done -> skip.
+            incomplete = [r for r in ep_rows if not r["completed"]]
+            if not incomplete:
+                continue
+            resume = min(incomplete, key=lambda r: (r["season"], r["episode"]))
+        elif movie_row is not None:
+            if movie_row["completed"]:
+                continue
+            resume = movie_row
+        else:
+            continue
+
         try:
-            details = await client.title(r["title_id"])
+            details = await client.title(title_id)
         except Exception:
             continue
         items.append({
-            "title_id": r["title_id"],
+            "title_id": title_id,
             "title": details.get("title") or details.get("name"),
             "type": details.get("_type"),
-            "poster": f"/tmdb/poster/{r['title_id']}?size=w342",
-            "season": r["season"],
-            "episode": r["episode"],
-            "position_ms": r["position_ms"],
-            "duration_ms": r["duration_ms"],
-            "completed": bool(r["completed"]),
-            "updated_at": r["updated_at"],
+            "poster": f"/tmdb/poster/{title_id}?size=w342",
+            "season": resume["season"],
+            "episode": resume["episode"],
+            "position_ms": resume["position_ms"],
+            "duration_ms": resume["duration_ms"],
+            "completed": bool(resume["completed"]),
+            "updated_at": resume["updated_at"],
         })
     return {"items": items}
 

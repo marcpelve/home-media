@@ -251,7 +251,7 @@ function renderView(view, params) {
   if (sourcePrefetchTimer) { clearTimeout(sourcePrefetchTimer); sourcePrefetchTimer = null; }
   if (view !== "detail") abortStalePrefetch(null);
   if (view === "search") return renderSearch(params.query, params.category || "all");
-  if (view === "detail") return openDetail(params.id, params.type);
+  if (view === "detail") return openDetail(params.id, params.type, params.season, params.episode);
   if (view === "settings") return renderSettings();
   if (view === "library") return renderLibrary();
   if (view === "librarytitle") return openLibraryTitle(params.id);
@@ -505,11 +505,11 @@ function makeCard(item, { withProgress = false } = {}) {
   card.appendChild(meta);
   card.tabIndex = 0; // focusable so "back" can restore focus here
   card.setAttribute("role", "button");
-  card.addEventListener("click", () => navPush("detail", { id: item.id, type: item.type }));
+  card.addEventListener("click", () => navPush("detail", { id: item.id, type: item.type, season: item.season, episode: item.episode }));
   card.addEventListener("keydown", (e) => {
     if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
       e.preventDefault();
-      navPush("detail", { id: item.id, type: item.type });
+      navPush("detail", { id: item.id, type: item.type, season: item.season, episode: item.episode });
     }
   });
   // Netflix/Prime-style: hovering a card updates the backdrop at the top
@@ -936,7 +936,7 @@ function startBadgePoll() {
   setInterval(updateDlBadgeFromApi, 10000);
 }
 
-async function openDetail(id, type) {
+async function openDetail(id, type, season, episode) {
   try {
     const key = "detail:" + id;
     let d = cacheGet(key);
@@ -947,10 +947,16 @@ async function openDetail(id, type) {
     }
     let currentEp = null;
     if (d._type === "tv") {
-      // Cheap localhost read of local watch progress; defaults the picker and
-      // the background prefetch to the episode the user is on.
-      const wp = await api("/watch/progress/" + id).catch(() => null);
-      if (wp && wp.episode != null) currentEp = { season: wp.season, episode: wp.episode };
+      if (season != null && episode != null) {
+        // A Continue Watching card carries its resume episode - open that
+        // directly instead of re-deriving the most-recent one.
+        currentEp = { season, episode };
+      } else {
+        // Cheap localhost read of local watch progress; defaults the picker and
+        // the background prefetch to the episode the user is on.
+        const wp = await api("/watch/progress/" + id).catch(() => null);
+        if (wp && wp.episode != null) currentEp = { season: wp.season, episode: wp.episode };
+      }
     }
     renderDetail(d, currentEp);
   } catch (e) {
