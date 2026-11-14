@@ -420,6 +420,28 @@ Full design: PLAN.md. This file tracks multi-session progress.
   Commits: 5589cf9, 966a0db, b193f93. 205 tests pass. Live result:
   sync {pushed: 30, pulled: 0, error: null}, Drive files contain valid
   JSON docs.
+- (2026-11-14) P-M4j (sync speed, opencode run in worktree
+  home-media-pmj, branch pmj/sync-speed): sync took ~70s for 30 titles
+  (measured per-call: search 0.28s, media read 0.26s, delete 0.48s,
+  session open 0.36s, complete 1.00s; fully sequential loop, every sync
+  re-pushed ALL titles). Three fixes:
+  (a) DriveBackend._files_cache + _list_subfolder: one listing request per
+  subfolder per instance (double-checked under a lock, paginated) instead
+  of a per-title Drive search; write_title/delete_title invalidate the
+  cache (replace-on-update changes the file id -> stale entry would 404).
+  (b) pull() reads all remote docs in parallel (ThreadPoolExecutor, 8
+  workers; merge stays single-threaded on one connection) and returns the
+  docs it read.
+  (c) sync_all_cloud pushes only titles whose data ts is strictly newer
+  than the remote's, or whose remote doc is missing/unreadable (self-
+  heal), in parallel. Data ts = max of the title row's + every watch row's
+  updated_at (NOT the doc's top-level stamp, which build_doc sets to build
+  time). push_title unchanged for ProgressPusher; build_local_doc
+  extracted.
+  Commits: 7e9a3b9 (storage), c0ae6a2 (sync). 212 tests pass (7 new).
+  Live result: unchanged sync 2.0s / 0 pushes (was ~70s / 30); one changed
+  title -> 3.5s / 1 push; first post-rebuild sync 4.35s / 5 self-heal
+  pushes (titles whose remote doc was missing/stale from manual testing).
 
 ## Session endpoint (2026-11-11) — GitHub release pipeline
 
