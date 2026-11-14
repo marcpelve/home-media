@@ -107,12 +107,12 @@ def update(db_path: str, updates: dict) -> dict:
     return view(db_path)
 
 
-@router.get("/settings")
+@router.get("")
 async def get_settings(request: Request) -> dict:
     return view(_db_path(request))
 
 
-@router.put("/settings")
+@router.put("")
 async def put_settings(request: Request, body: dict) -> dict:
     try:
         return update(_db_path(request), body)

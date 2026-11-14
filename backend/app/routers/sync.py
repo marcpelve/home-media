@@ -30,7 +30,7 @@ def _settings(request: Request) -> dict:
     return {row["key"]: row["value"] for row in rows}
 
 
-@router.post("/sync")
+@router.post("")
 async def sync(request: Request) -> dict:
     # make_cloud_backend returns None when Drive is unconnected or config
     # is incomplete; report "not configured" instead of erroring the route.
@@ -42,7 +42,7 @@ async def sync(request: Request) -> dict:
     return await asyncio.to_thread(sync_all_cloud, backend, _db_path(request))
 
 
-@router.get("/sync/status")
+@router.get("/status")
 def status(request: Request) -> dict:
     settings = _settings(request)
     conn = sqlite3.connect(_db_path(request))

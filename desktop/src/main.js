@@ -1856,6 +1856,8 @@ async function renderSettings() {
     '<div class="settings"><h1>Settings</h1>' +
     '<section class="trakt-panel" id="trakt-panel"><h2>Trakt</h2>' +
     '<p class="muted">Loading&hellip;</p></section>' +
+    '<section class="trakt-panel" id="sync-panel"><h2>Sync</h2>' +
+    '<p class="muted">Loading&hellip;</p></section>' +
     '<section class="trakt-panel" id="tmdb-panel"><h2>TMDB</h2>' +
     '<p class="muted">Loading&hellip;</p></section>' +
     '<section class="trakt-panel" id="torbox-panel"><h2>Torbox</h2>' +
@@ -1864,7 +1866,7 @@ async function renderSettings() {
     '<p class="muted">Loading&hellip;</p></section>' +
     '<section class="trakt-panel" id="updates-panel"><h2>Updates</h2>' +
     '<p class="muted">Loading&hellip;</p></section></div>';
-  await Promise.all([loadTraktStatus(), loadTmdbStatus(), loadTorboxStatus(), loadCacheStatus(), loadUpdatesStatus()]);
+  await Promise.all([loadTraktStatus(), loadSyncStatus(), loadTmdbStatus(), loadTorboxStatus(), loadCacheStatus(), loadUpdatesStatus()]);
   refreshSvcStatus();
 }
 
@@ -2038,6 +2040,182 @@ async function doTraktSync() {
     ? "Import: " + res.error
     : "Imported " + res.imported + " items.";
   setTimeout(loadTraktStatus, 600);
+}
+
+/* Settings: sync panel (device id, backend, drive creds, sync now) */
+async function loadSyncStatus() {
+  const panel = document.getElementById("sync-panel");
+  if (!panel) return;
+  let s, d;
+  try {
+    [s, d] = await Promise.all([api("/settings"), api("/drive/status")]);
+  } catch (e) {
+    panel.innerHTML = '<h2>Sync</h2><p class="muted">Status unavailable.</p>';
+    return;
+  }
+  const syncInfo = s.sync || {};
+  const lastSync = syncInfo.last_sync || null;
+  const pending = syncInfo.pending_count != null ? syncInfo.pending_count : 0;
+
+  let html = '<h2>Sync</h2>';
+
+  // 1. Device ID
+  html +=
+    '<p><label>Device ID </label>' +
+    '<input type="text" class="key-input" id="sync-device-id" value="' + esc(s.device_id || "") + '" autocomplete="off" spellcheck="false">' +
+    ' <button class="btn" id="sync-device-save">Save</button></p>' +
+    '<p class="trakt-msg muted" id="sync-device-msg"></p>';
+
+  // 2. Backend
+  const backend = s.storage_backend || "local";
+  html +=
+    '<p><label>Backend </label>' +
+    '<select id="sync-backend">' +
+    '<option value="local"' + (backend === "local" ? " selected" : "") + '>local</option>' +
+    '<option value="drive"' + (backend === "drive" ? " selected" : "") + '>drive</option>' +
+    '</select> ' +
+    '<button class="btn" id="sync-backend-save">Save</button></p>' +
+    '<p class="trakt-msg muted" id="sync-backend-msg"></p>';
+
+  // 3. Drive credentials
+  html +=
+    '<p>Drive credentials</p>' +
+    '<input type="text" class="key-input" id="sync-drive-client-id" placeholder="Drive client ID" value="' + esc(s.drive_client_id || "") + '" autocomplete="off" spellcheck="false">' +
+    '<input type="password" class="key-input" id="sync-drive-client-secret" placeholder="leave blank if already set" autocomplete="off" spellcheck="false">' +
+    '<button class="btn" id="sync-drive-creds-save">Save</button>' +
+    '<p class="trakt-msg muted" id="sync-drive-msg"></p>';
+
+  // 4. Drive status
+  if (s.drive_connected) {
+    let driveLine = "Drive: connected";
+    if (d && d.expires_at) {
+      driveLine += ' &mdash; token expires ' + esc(new Date(d.expires_at * 1000).toLocaleString());
+    }
+    html += '<p class="muted">' + driveLine + '</p>';
+  } else if (d && d.pending) {
+    html += '<p class="muted">Drive: waiting for browser authorization&hellip;</p>';
+  } else {
+    html += '<button class="btn" id="sync-drive-connect">Connect Drive</button>' +
+      '<p class="trakt-msg muted" id="sync-connect-msg"></p>';
+  }
+
+  // 5. Sync now
+  html +=
+    '<button class="btn" id="sync-now">Sync now</button>' +
+    '<p class="trakt-msg muted" id="sync-now-msg"></p>';
+
+  // 6. Last sync
+  if (lastSync) {
+    let lastLine = "Last sync: " + esc(lastSync.last_sync_at || "");
+    if (lastSync.last_push_at) lastLine += " &mdash; pushed: " + esc(lastSync.last_push_at);
+    if (lastSync.last_error) lastLine += " &mdash; error: " + esc(lastSync.last_error);
+    html += '<p class="muted">' + lastLine + '</p>';
+  }
+  html += '<p class="muted">pending: ' + esc(String(pending)) + '</p>';
+
+  panel.innerHTML = html;
+
+  // Device ID save
+  const devSave = document.getElementById("sync-device-save");
+  if (devSave) devSave.addEventListener("click", async () => {
+    const input = document.getElementById("sync-device-id");
+    const msg = document.getElementById("sync-device-msg");
+    const val = input ? input.value.trim() : "";
+    if (!val) { if (msg) msg.textContent = "Enter a device ID first."; return; }
+    if (msg) msg.textContent = "Saving\u2026";
+    try {
+      await api("/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ device_id: val }) });
+      loadSyncStatus();
+    } catch (e) { if (msg) msg.textContent = "Save failed: " + e.message; }
+  });
+
+  // Backend save
+  const beSave = document.getElementById("sync-backend-save");
+  if (beSave) beSave.addEventListener("click", async () => {
+    const sel = document.getElementById("sync-backend");
+    const msg = document.getElementById("sync-backend-msg");
+    const val = sel ? sel.value : "local";
+    if (msg) msg.textContent = "Saving\u2026";
+    try {
+      await api("/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ storage_backend: val }) });
+      loadSyncStatus();
+    } catch (e) { if (msg) msg.textContent = "Save failed: " + e.message; }
+  });
+
+  // Drive credentials save
+  const credsSave = document.getElementById("sync-drive-creds-save");
+  if (credsSave) credsSave.addEventListener("click", async () => {
+    const idInput = document.getElementById("sync-drive-client-id");
+    const secInput = document.getElementById("sync-drive-client-secret");
+    const msg = document.getElementById("sync-drive-msg");
+    const cid = idInput ? idInput.value.trim() : "";
+    const csec = secInput ? secInput.value.trim() : "";
+    if (!cid && !csec) { if (msg) msg.textContent = "Enter at least one field."; return; }
+    if (msg) msg.textContent = "Saving\u2026";
+    const body = {};
+    if (cid) body.drive_client_id = cid;
+    if (csec) body.drive_client_secret = csec;
+    try {
+      await api("/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      loadSyncStatus();
+    } catch (e) { if (msg) msg.textContent = "Save failed: " + e.message; }
+  });
+
+  // Drive connect
+  const connBtn = document.getElementById("sync-drive-connect");
+  if (connBtn) connBtn.addEventListener("click", async () => {
+    const msg = document.getElementById("sync-connect-msg");
+    if (msg) msg.textContent = "Starting\u2026";
+    try {
+      const res = await api("/drive/connect", { method: "POST" });
+      openExternal(res.authorization_url);
+      if (msg) msg.textContent = "Waiting for browser authorization\u2026";
+      // Poll /drive/status every ~2s for up to ~120s
+      let attempts = 0;
+      const poll = setInterval(async () => {
+        attempts++;
+        if (attempts > 60) {
+          clearInterval(poll);
+          const p = document.getElementById("sync-panel");
+          if (p) {
+            p.innerHTML += '<p class="muted">Not connected yet \u2014 finish the browser flow and press Refresh</p>' +
+              '<button class="btn" id="sync-refresh">Refresh</button>';
+            const rb = document.getElementById("sync-refresh");
+            if (rb) rb.addEventListener("click", () => loadSyncStatus());
+          }
+          return;
+        }
+        try {
+          const st = await api("/drive/status");
+          if (st.connected) {
+            clearInterval(poll);
+            loadSyncStatus();
+          }
+        } catch (_) { /* keep polling */ }
+      }, 2000);
+    } catch (e) {
+      if (msg) msg.textContent = "Connect failed: " + e.message;
+    }
+  });
+
+  // Sync now
+  const syncBtn = document.getElementById("sync-now");
+  if (syncBtn) syncBtn.addEventListener("click", async () => {
+    const msg = document.getElementById("sync-now-msg");
+    syncBtn.disabled = true;
+    if (msg) msg.textContent = "Syncing\u2026";
+    try {
+      const res = await api("/sync", { method: "POST" });
+      if (res.error) {
+        if (msg) msg.textContent = res.error;
+      } else {
+        if (msg) msg.textContent = "Synced: " + (res.pushed || 0) + " pushed, " + (res.pulled || 0) + " pulled";
+      }
+    } catch (e) {
+      if (msg) msg.textContent = "Sync failed: " + e.message;
+    }
+    syncBtn.disabled = false;
+  });
 }
 
 /* Settings: TMDB API token (stored in-app, validated on save) */
