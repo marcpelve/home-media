@@ -442,6 +442,23 @@ Full design: PLAN.md. This file tracks multi-session progress.
   Live result: unchanged sync 2.0s / 0 pushes (was ~70s / 30); one changed
   title -> 3.5s / 1 push; first post-rebuild sync 4.35s / 5 self-heal
   pushes (titles whose remote doc was missing/stale from manual testing).
+- (2026-11-14) P-M4k (concurrent-replace race, direct patch): live 404 on
+  push of movie:687163 ("File not found: 1vHLR..."). Root cause: a
+  debounced progress push and a manual sync each run on their OWN
+  DriveBackend instance (the factory builds a fresh one for token
+  freshness), so their listing caches can't serialize them. Interleaved
+  replaces of the same title resolved an id a concurrent writer had
+  already deleted (404 on the delete) and could leave two same-name
+  files. Fix: a process-wide per-key writer lock (_writer_lock)
+  serializes the whole find+delete+create; a 404 on the delete is
+  tolerated (old version already gone = the state we wanted), any other
+  error still raises. InMemoryDrive made thread-safe (handler under one
+  lock) for the race test.
+  Commits: 32c5cac. 214 tests pass (2 new: stale-404 tolerance, concurrent
+  two-instance write leaves exactly one file — stable over 20 runs).
+  Live verification: two real DriveBackend instances raced on
+  movie:687163 (the bug's title) — both succeeded, exactly one file,
+  doc content unchanged. App sync after: 2.1s / 0 pushes / no error.
 
 ## Session endpoint (2026-11-11) — GitHub release pipeline
 
