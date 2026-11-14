@@ -310,6 +310,31 @@ Full design: PLAN.md. This file tracks multi-session progress.
   settings + 11 tests), 3c45574 (wiring + stamping + 7 tests). 189 tests
   pass.
 
+- (2026-11-13) P-M5 (Trakt -> cloud-storage sync migration, PLAN.md S16):
+  one-time Trakt import; ongoing Trakt sync dropped. `trakt.py`:
+  `get_all_history()` (paginated /users/{u}/history, 100/page, stops on a
+  short page); `mark_watched` removed. `sync.py`: the deprecated section
+  (`_record_sync`, `_scrobble_node`, `push_progress`, `pull_progress`,
+  `sync_all`) replaced by `import_from_trakt(client, db_path)`: full
+  history -> dedupe replays (max played_at per (tmdb_id, season, episode))
+  -> minimal titles row for unknown titles (never overwrites) ->
+  watch_progress completed=1, completed_at=played_at verbatim, device
+  stamped, updated_at=now (import time, so cloud sync propagates it);
+  LWW-safe (a strictly-newer local row is never downgraded — normalize_ts
+  compare); per-item errors collected, never aborting. Records
+  trakt_last_import_at/_count in settings. `routers/trakt.py`:
+  POST /trakt/sync removed; POST /trakt/import added (401 unauthed);
+  GET /trakt/status now reports last_import from settings (the legacy
+  trakt_sync table stays in db.py, unused). main.py: TRAKT_SYNC_INTERVAL_S,
+  do_trakt_sync, _trakt_sync_loop and the sync_task gone; app.state.trakt
+  stays (import + auth + recommendations). desktop/src/main.js: Trakt panel
+  "Sync now" -> "Import from Trakt" (POST /trakt/import, shows imported
+  count); the fire-and-forget /trakt/sync call removed. Tests: 7 obsolete
+  trakt-sync tests + 2 do_trakt_sync tests removed, 11 import tests added
+  (pagination, movie/episode mapping, dedupe, both LWW directions,
+  idempotency, route 401/200, status). One opencode run: f752580. 191 tests
+  pass.
+
 ## Session endpoint (2026-11-11) — GitHub release pipeline
 
 State: repo pushed to GitHub (`marcpelve/home-media`), branch `main`.
