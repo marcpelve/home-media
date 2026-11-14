@@ -270,21 +270,25 @@ class DriveBackend(StorageBackend):
         fid = self._subfolder(self._subdir_for(t_type))
         name = f"{tmdb_id}.json"
         content = json.dumps(data, indent=2, sort_keys=True).encode("utf-8")
-        meta: dict = {"name": name, "mimeType": "application/json"}
+        meta: dict = {"name": name, "mimeType": "application/json",
+                      "parents": [fid]}
         found = self._find_file(fid, str(tmdb_id))
         if found is not None:
-            # Update in place; metadata without parents keeps the location.
-            self._resumable_upload("PUT", f"/files/{found['id']}", meta,
-                                   content)
-        else:
-            # Create: parents pins the new file under the type subfolder.
-            meta["parents"] = [fid]
-            self._resumable_upload("POST", "/files", meta, content)
+            # Update = replace. In-place content updates (PUT /files/{id})
+            # are unroutable on this network (HTML 404), and the sync
+            # pushes every local title each run, so deleting the old file
+            # before creating the new one is self-healing. Lookup is
+            # name-based, so the id swap is invisible.
+            self._delete_file(found["id"])
+        self._resumable_create(meta, content)
 
-    def _resumable_upload(self, method: str, path: str, meta: dict,
-                          content: bytes) -> None:
-        """Two-step resumable upload: POST/PUT the metadata to open a
-        session, then PUT the raw media to the session URL from the
+    def _delete_file(self, fid: str) -> None:
+        resp = self.client.delete(f"/files/{fid}", headers=self._headers())
+        self._check(resp)
+
+    def _resumable_create(self, meta: dict, content: bytes) -> None:
+        """Create a file via the resumable protocol: POST the metadata to
+        open a session, then PUT the raw media to the session URL from the
         ``Location`` header.
 
         Multipart/related uploads were silently dropping the media part on
@@ -292,9 +296,9 @@ class DriveBackend(StorageBackend):
         protocol -- the same one the official clients use for big files.
         """
         headers = self._headers()
-        resp = self.upload_client.request(method, path,
-                                          params={"uploadType": "resumable"},
-                                          headers=headers, json=meta)
+        resp = self.upload_client.post("/files",
+                                       params={"uploadType": "resumable"},
+                                       headers=headers, json=meta)
         self._check(resp)
         session = resp.headers.get("Location")
         if not session:

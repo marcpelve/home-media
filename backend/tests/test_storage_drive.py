@@ -113,19 +113,6 @@ class InMemoryDrive:
             self.post_count += 1
             return self._session(fid)
 
-        if method == "PUT" and path.startswith("/files/"):
-            # Open an update session for an existing file.
-            fid = path.rsplit("/", 1)[1]
-            f = self.files.get(fid)
-            if f is None:
-                return httpx.Response(404, json={"error": "not found"})
-            meta = json.loads(request.content)
-            if "name" in meta:
-                f["name"] = meta["name"]
-            if "mimeType" in meta:
-                f["mimeType"] = meta["mimeType"]
-            return self._session(fid)
-
         if method == "PUT" and path == "/files" and "upload_id" in params:
             # Complete the upload: raw media body.
             fid = params["upload_id"]
@@ -199,8 +186,11 @@ def test_drive_update_existing(drive):
                      watch=[], device=None)
     backend.write_title("movie:1", doc1)
     backend.write_title("movie:1", doc2)
-    assert drv.post_count == 1, "second write must be an UPDATE, not a create"
+    # Update = replace: the second write deletes the old file and creates a
+    # new one (in-place content PUTs are unroutable on this network).
     assert drv.put_count == 2, "one completed upload per write"
+    stored = [f for f in drv.files.values() if f["name"] == "1.json"]
+    assert len(stored) == 1, "replace must leave exactly one file"
     assert backend.read_title("movie:1") == doc2
 
 
