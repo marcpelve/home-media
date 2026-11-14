@@ -20,7 +20,12 @@ from app.storage import StorageBackend, create_backend
 DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
+DRIVE_API_URL = "https://www.googleapis.com/drive/v3"
 REDIRECT_URI = "http://127.0.0.1:8790/drive/callback"
+
+# The sync root in My Drive (P-M0): HomeMedia/ with movies/ and shows/.
+ROOT_FOLDER_NAME = "HomeMedia"
+ROOT_SUBFOLDERS = ("movies", "shows")
 
 # Refresh a touch before expiry so a call can't straddle the boundary.
 _REFRESH_SKEW_S = 60.0
@@ -105,7 +110,89 @@ def complete_connect(
     _store_tokens(db_path, tokens)
     # Clear the one-time state so a replay of the callback is rejected.
     _set_setting(db_path, "drive_oauth_state", "")
+    # Bootstrap the sync root folder (idempotent). Without a usable root the
+    # connection is useless, so roll the tokens back on failure.
+    try:
+        bootstrap_drive_root(db_path, tokens["access_token"], client)
+    except DriveAuthError:
+        _set_setting(db_path, "drive_access_token", "")
+        _set_setting(db_path, "drive_refresh_token", "")
+        _set_setting(db_path, "drive_access_expires_at", "")
+        raise
     return {"connected": True}
+
+
+# ---------------------------------------------------------------------------
+# Drive root folder bootstrap (My Drive/HomeMedia with movies/ + shows/)
+# ---------------------------------------------------------------------------
+
+def _drive_headers(access_token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {access_token}"}
+
+
+def _drive_check(resp: httpx.Response) -> None:
+    if resp.status_code >= 400:
+        raise DriveAuthError(f"Drive API {resp.status_code}: {resp.text[:200]}")
+
+
+def _find_folder(
+    client: httpx.Client, access_token: str, name: str, parent_id: str
+) -> str | None:
+    """Id of an untrashed folder named *name* under *parent_id*, or None."""
+    q = (
+        f"'{parent_id}' in parents and "
+        f"mimeType='application/vnd.google-apps.folder' and "
+        f"name='{name}' and trashed=false"
+    )
+    resp = client.get(
+        "/files", params={"q": q, "fields": "files(id,name)"},
+        headers=_drive_headers(access_token),
+    )
+    _drive_check(resp)
+    files = resp.json().get("files", [])
+    return files[0]["id"] if files else None
+
+
+def _create_folder(
+    client: httpx.Client, access_token: str, name: str, parent_id: str | None
+) -> str:
+    body: dict[str, object] = {
+        "name": name,
+        "mimeType": "application/vnd.google-apps.folder",
+    }
+    if parent_id is not None:
+        body["parents"] = [parent_id]
+    resp = client.post(
+        "/files", json=body, headers=_drive_headers(access_token)
+    )
+    _drive_check(resp)
+    return resp.json()["id"]
+
+
+def bootstrap_drive_root(
+    db_path: str, access_token: str, client: httpx.Client | None = None
+) -> str:
+    """Find or create My Drive/HomeMedia (with movies/ + shows/ subfolders)
+    and store its id as ``drive_root_folder_id``. Idempotent: re-running it
+    (e.g. after a re-authorize) reuses the existing folders. Raises
+    DriveAuthError on API failure; the caller decides the fallout."""
+    if client is None:
+        with httpx.Client(base_url=DRIVE_API_URL) as c:
+            return _bootstrap_root(db_path, access_token, c)
+    return _bootstrap_root(db_path, access_token, client)
+
+
+def _bootstrap_root(
+    db_path: str, access_token: str, client: httpx.Client
+) -> str:
+    root_id = _find_folder(client, access_token, ROOT_FOLDER_NAME, "root")
+    if root_id is None:
+        root_id = _create_folder(client, access_token, ROOT_FOLDER_NAME, None)
+    for name in ROOT_SUBFOLDERS:
+        if _find_folder(client, access_token, name, root_id) is None:
+            _create_folder(client, access_token, name, root_id)
+    _set_setting(db_path, "drive_root_folder_id", root_id)
+    return root_id
 
 
 def _token_request(client: httpx.Client | None, form: dict) -> dict:
@@ -222,6 +309,17 @@ def make_cloud_backend(
         if token is None:
             return None
         eff["drive_access_token"] = token
+        # Lazy bootstrap: connections made before the root folder existed
+        # (or a wiped setting) get HomeMedia/ created on demand, so a
+        # re-authorize is never required.
+        if not eff.get("drive_root_folder_id"):
+            try:
+                bootstrap_drive_root(db_path, token, client)
+            except DriveAuthError:
+                return None
+            eff["drive_root_folder_id"] = _get_setting(
+                db_path, "drive_root_folder_id"
+            )
 
     try:
         return create_backend(eff)

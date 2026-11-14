@@ -56,6 +56,54 @@ def _make_token_handler(
     return httpx.MockTransport(handler)
 
 
+def _make_oauth_drive_handler(
+    drive_files: dict[str, list[dict]] | None = None,
+    drive_status: int = 200,
+    calls: list[httpx.Request] | None = None,
+) -> httpx.MockTransport:
+    """A MockTransport serving BOTH the token endpoint (any POST to
+    /token) and the Drive API (GET /files searches, POST /files creates).
+
+    *drive_files* maps a folder name to the files its name-search returns;
+    names absent from the dict are "not found". *drive_status* != 200 makes
+    every Drive request fail with that status. Created folders get ids
+    folder_1, folder_2, ... in creation order.
+    """
+    if calls is None:
+        calls = []
+    if drive_files is None:
+        drive_files = {}
+    state = {"created": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if request.url.path == "/token":
+            return httpx.Response(200, json=TOKEN_OK)
+        if drive_status != 200:
+            return httpx.Response(drive_status, text="denied")
+        if request.method == "GET":
+            q = request.url.params.get("q", "")
+            for name, files in drive_files.items():
+                if f"name='{name}'" in q:
+                    return httpx.Response(200, json={"files": files})
+            return httpx.Response(200, json={"files": []})
+        # POST /files -> create
+        state["created"] += 1
+        return httpx.Response(200, json={"id": f"folder_{state['created']}"})
+
+    return httpx.MockTransport(handler)
+
+
+def _oauth_drive_client(
+    transport: httpx.MockTransport,
+) -> httpx.Client:
+    """A client wired for both the token endpoint (absolute URL) and the
+    Drive API (relative /files paths via base_url)."""
+    return httpx.Client(
+        transport=transport, base_url="https://www.googleapis.com/drive/v3"
+    )
+
+
 def _set(db_path: str, key: str, value: str) -> None:
     conn = sqlite3.connect(db_path)
     conn.execute(
@@ -115,8 +163,9 @@ def test_complete_connect_stores_tokens(db: str):
     result = start_connect(db, FAKE_CLIENT_ID, FAKE_CLIENT_SECRET)
     state = _get(db, "drive_oauth_state")
 
-    transport = _make_token_handler()
-    client = httpx.Client(transport=transport)
+    calls: list[httpx.Request] = []
+    transport = _make_oauth_drive_handler(calls=calls)
+    client = _oauth_drive_client(transport)
     resp = complete_connect(
         db, FAKE_CLIENT_ID, FAKE_CLIENT_SECRET, "fake_code", state,
         client=client,
@@ -133,6 +182,62 @@ def test_complete_connect_stores_tokens(db: str):
 
     # State is cleared.
     assert _get(db, "drive_oauth_state") == ""
+
+    # Root folder bootstrapped (nothing existed -> all three created,
+    # HomeMedia first) and its id stored.
+    assert _get(db, "drive_root_folder_id") == "folder_1"
+    creates = [
+        r for r in calls
+        if r.method == "POST" and r.url.path.endswith("/files")
+    ]
+    assert len(creates) == 3
+
+
+def test_complete_connect_reuses_existing_root(db: str):
+    """Existing HomeMedia/ with movies/ + shows/ -> no folder creates,
+    the existing root id is stored."""
+    start_connect(db, FAKE_CLIENT_ID, FAKE_CLIENT_SECRET)
+    state = _get(db, "drive_oauth_state")
+    assert state is not None
+
+    existing = {
+        "HomeMedia": [{"id": "root_1", "name": "HomeMedia"}],
+        "movies": [{"id": "sub_m", "name": "movies"}],
+        "shows": [{"id": "sub_s", "name": "shows"}],
+    }
+    calls: list[httpx.Request] = []
+    transport = _make_oauth_drive_handler(drive_files=existing, calls=calls)
+    client = _oauth_drive_client(transport)
+    resp = complete_connect(
+        db, FAKE_CLIENT_ID, FAKE_CLIENT_SECRET, "fake_code", state,
+        client=client,
+    )
+    assert resp == {"connected": True}
+    assert _get(db, "drive_root_folder_id") == "root_1"
+    creates = [
+        r for r in calls
+        if r.method == "POST" and r.url.path.endswith("/files")
+    ]
+    assert creates == []
+
+
+def test_complete_connect_bootstrap_failure_rolls_back_tokens(db: str):
+    """Drive API failure during bootstrap -> DriveAuthError and the stored
+    tokens are cleared so a retry starts clean."""
+    start_connect(db, FAKE_CLIENT_ID, FAKE_CLIENT_SECRET)
+    state = _get(db, "drive_oauth_state")
+    assert state is not None
+
+    transport = _make_oauth_drive_handler(drive_status=403)
+    client = _oauth_drive_client(transport)
+    with pytest.raises(DriveAuthError, match="Drive API 403"):
+        complete_connect(
+            db, FAKE_CLIENT_ID, FAKE_CLIENT_SECRET, "fake_code", state,
+            client=client,
+        )
+    assert not _get(db, "drive_access_token")
+    assert not _get(db, "drive_refresh_token")
+    assert not _get(db, "drive_root_folder_id")
 
 
 def test_complete_connect_state_mismatch(db: str):
@@ -255,6 +360,21 @@ def test_make_cloud_backend_drive_connected(db: str):
     backend = make_cloud_backend(db)
     assert isinstance(backend, DriveBackend)
     assert backend.access_token == "at_valid"
+
+
+def test_make_cloud_backend_lazy_bootstraps_root(db: str):
+    """Tokens present but no drive_root_folder_id (a connection made
+    before bootstrap existed) -> the root folder is created on demand
+    and the backend is returned, no re-authorize needed."""
+    _set(db, "drive_access_token", "at_fresh")
+    _set(db, "drive_refresh_token", "rt_fresh")
+    _set(db, "drive_access_expires_at", str(time.time() + 3600))
+
+    transport = _make_oauth_drive_handler()
+    client = _oauth_drive_client(transport)
+    backend = make_cloud_backend(db, client=client)
+    assert isinstance(backend, DriveBackend)
+    assert _get(db, "drive_root_folder_id") == "folder_1"
 
 
 def test_make_cloud_backend_auto_drive_when_connected(db: str):
