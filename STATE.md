@@ -264,6 +264,24 @@ Full design: PLAN.md. This file tracks multi-session progress.
   (core + LocalFolder + 11 tests), 5a3fe05 (Drive + in-memory-Drive
   MockTransport tests, 7 tests). 158 tests pass.
 
+- (2026-11-13) P-M3 (Trakt -> cloud-storage sync migration, PLAN.md S16):
+  sync engine. `backend/app/sync.py` cloud section: `normalize_ts` (doc
+  "…Z" and SQLite forms -> one comparable UTC shape), `build_title_doc`,
+  `push_title` (title row + all watch rows -> doc -> backend), `pull`
+  (per-title LWW merge; strictly-newer `updated_at` wins, winner's
+  updated_at stored VERBATIM to preserve provenance; local catalog
+  authoritative for title existence; per-title error isolation),
+  `sync_all_cloud` (pull + full push, never raises), `record_sync_status` /
+  `pending_push_count` (new `sync_status` table in db.py), `push_key_for`,
+  and `ProgressPusher` (debounced per-title push; loop captured at init +
+  `call_soon_threadsafe` because sync endpoints run in FastAPI's thread
+  pool; flush on shutdown). Trakt functions marked DEPRECATED (retained for
+  P-M5 import, not removed). New `routers/sync.py`: POST /sync, GET
+  /sync/status. Play + library progress endpoints schedule the pusher.
+  main.py lifespan: cloud backend + pusher + 5-min cloud sync loop, all
+  gated on `sync_mode` being configured. Two opencode runs: 3e525a6 (engine
+  + 9 tests), b663b87 (pusher + loop + 4 tests). 171 tests pass.
+
 ## Session endpoint (2026-11-11) — GitHub release pipeline
 
 State: repo pushed to GitHub (`marcpelve/home-media`), branch `main`.
