@@ -337,3 +337,13 @@ def test_settings_view_update(db: str):
     # Bad storage_backend raises ValueError.
     with pytest.raises(ValueError):
         update(db, {"storage_backend": "bogus"})
+
+
+def test_settings_view_device_defaults_to_username(db: str, monkeypatch):
+    """View reports the effective device id: the Windows username when no
+    explicit device_id is set, else 'default'."""
+    monkeypatch.setenv("USERNAME", "testuser")
+    assert view(db)["device_id"] == "testuser"
+
+    monkeypatch.delenv("USERNAME", raising=False)
+    assert view(db)["device_id"] == "default"

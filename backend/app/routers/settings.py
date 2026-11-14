@@ -6,6 +6,7 @@ the OAuth flow, never by this endpoint.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 
 from fastapi import APIRouter, HTTPException, Request
@@ -82,7 +83,9 @@ def view(db_path: str) -> dict:
         # setting is present) so the UI shows the truth, not the raw value.
         "storage_backend": effective_backend(settings),
         "storage_local_root": settings.get("storage_local_root"),
-        "device_id": settings.get("device_id"),
+        # Effective device id (settings value, else the Windows username,
+        # else 'default') so the UI shows what writes are actually stamped.
+        "device_id": settings.get("device_id") or os.environ.get("USERNAME", "default"),
         "drive_client_id": settings.get("drive_client_id"),
         "drive_root_folder_id": settings.get("drive_root_folder_id"),
         "drive_connected": bool(access and refresh),
