@@ -272,27 +272,35 @@ class DriveBackend(StorageBackend):
         content = json.dumps(data, indent=2, sort_keys=True).encode("utf-8")
         meta: dict = {"name": name, "mimeType": "application/json"}
         found = self._find_file(fid, str(tmdb_id))
-        # Multipart shape (metadata + media parts) is required by Drive v3
-        # for both create and update; only the metadata differs. Both parts
-        # go in ``files=`` -- a tuple in ``data=`` is expanded by httpx into
-        # repeated same-name fields, corrupting the metadata part.
         if found is not None:
-            # Update in place; metadata without parents is fine for a PUT.
-            meta_json = json.dumps(meta)
-            resp = self.upload_client.put(
-                f"/files/{found['id']}", headers=self._headers(),
-                files={"metadata": (None, meta_json,
-                                    "application/json; charset=UTF-8"),
-                       "media": (name, content, "application/json")})
+            # Update in place; metadata without parents keeps the location.
+            self._resumable_upload("PUT", f"/files/{found['id']}", meta,
+                                   content)
         else:
             # Create: parents pins the new file under the type subfolder.
             meta["parents"] = [fid]
-            meta_json = json.dumps(meta)
-            resp = self.upload_client.post(
-                "/files", headers=self._headers(),
-                files={"metadata": (None, meta_json,
-                                    "application/json; charset=UTF-8"),
-                       "media": (name, content, "application/json")})
+            self._resumable_upload("POST", "/files", meta, content)
+
+    def _resumable_upload(self, method: str, path: str, meta: dict,
+                          content: bytes) -> None:
+        """Two-step resumable upload: POST/PUT the metadata to open a
+        session, then PUT the raw media to the session URL from the
+        ``Location`` header.
+
+        Multipart/related uploads were silently dropping the media part on
+        this network (file created, size 0), so uploads use the resumable
+        protocol -- the same one the official clients use for big files.
+        """
+        headers = self._headers()
+        resp = self.upload_client.request(method, path,
+                                          params={"uploadType": "resumable"},
+                                          headers=headers, json=meta)
+        self._check(resp)
+        session = resp.headers.get("Location")
+        if not session:
+            raise RuntimeError("Drive upload: response missing Location")
+        resp = self.upload_client.put(session, headers=headers,
+                                      content=content)
         self._check(resp)
 
     def delete_title(self, key: str) -> None:

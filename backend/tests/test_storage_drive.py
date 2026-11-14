@@ -33,23 +33,6 @@ def _q_value(q: str, field: str) -> str:
     return m.group(1) if m else ""
 
 
-def _parse_multipart(request: httpx.Request) -> dict[str, bytes]:
-    """Split a multipart/form-data body into {field: bytes}."""
-    ctype = request.headers.get("content-type", "")
-    m = re.search(r"boundary=(\"[^\"]+\"|[^;]+)", ctype)
-    boundary = m.group(1).strip().strip('"').encode()
-    parts: dict[str, bytes] = {}
-    for chunk in request.content.split(b"--" + boundary):
-        chunk = chunk.lstrip(b"\r\n")
-        if not chunk or chunk.startswith(b"--"):
-            continue
-        header_blob, _, content = chunk.partition(b"\r\n\r\n")
-        name_m = re.search(rb'name="([^"]*)"', header_blob)
-        if name_m:
-            parts[name_m.group(1).decode()] = content.removesuffix(b"\r\n")
-    return parts
-
-
 class InMemoryDrive:
     """Drive v3 stand-in: a dict of files plus the two type subfolders."""
 
@@ -68,6 +51,13 @@ class InMemoryDrive:
         self._seq += 1
         return f"file-{self._seq}"
 
+    def _session(self, fid: str) -> httpx.Response:
+        """Open a resumable session, mirroring Drive's Location header."""
+        return httpx.Response(
+            200, json={"id": fid, "name": self.files[fid]["name"]},
+            headers={"Location": f"{UPLOAD_BASE_URL}/files"
+                     f"?uploadType=resumable&upload_id={fid}"})
+
     def handler(self, request: httpx.Request) -> httpx.Response:
         self.requests.append((request.method, request.url.path))
         # request.url.path includes the base_url path; strip it to get the
@@ -79,6 +69,7 @@ class InMemoryDrive:
                 path = path.removeprefix(prefix)
                 break
         method = request.method
+        params = dict(request.url.params)
 
         if method == "GET" and path == "/files":
             q = request.url.params.get("q", "")
@@ -112,25 +103,38 @@ class InMemoryDrive:
             return httpx.Response(200, content=f["content"])
 
         if method == "POST" and path == "/files":
-            parts = _parse_multipart(request)
-            meta = json.loads(parts["metadata"])
+            # Open a create session: metadata JSON body, no media yet.
+            meta = json.loads(request.content)
             fid = self._next_id()
             self.files[fid] = {"name": meta["name"],
                                "mimeType": meta["mimeType"],
                                "parent": meta["parents"][0],
-                               "content": parts["media"]}
+                               "content": b""}
             self.post_count += 1
-            return httpx.Response(200, json={"id": fid, "name": meta["name"]})
+            return self._session(fid)
 
         if method == "PUT" and path.startswith("/files/"):
+            # Open an update session for an existing file.
             fid = path.rsplit("/", 1)[1]
             f = self.files.get(fid)
             if f is None:
                 return httpx.Response(404, json={"error": "not found"})
-            parts = _parse_multipart(request)
-            f["content"] = parts["media"]
+            meta = json.loads(request.content)
+            if "name" in meta:
+                f["name"] = meta["name"]
+            if "mimeType" in meta:
+                f["mimeType"] = meta["mimeType"]
+            return self._session(fid)
+
+        if method == "PUT" and path == "/files" and "upload_id" in params:
+            # Complete the upload: raw media body.
+            fid = params["upload_id"]
+            if fid not in self.files:
+                return httpx.Response(404, json={"error": "not found"})
+            self.files[fid]["content"] = request.content
             self.put_count += 1
-            return httpx.Response(200, json={"id": fid, "name": f["name"]})
+            return httpx.Response(200, json={"id": fid,
+                                             "name": self.files[fid]["name"]})
 
         if method == "DELETE" and path.startswith("/files/"):
             fid = path.rsplit("/", 1)[1]
@@ -196,7 +200,7 @@ def test_drive_update_existing(drive):
     backend.write_title("movie:1", doc1)
     backend.write_title("movie:1", doc2)
     assert drv.post_count == 1, "second write must be an UPDATE, not a create"
-    assert drv.put_count == 1
+    assert drv.put_count == 2, "one completed upload per write"
     assert backend.read_title("movie:1") == doc2
 
 
@@ -205,9 +209,11 @@ def test_drive_read_missing(drive):
 
 
 def test_drive_writes_use_upload_endpoint(drive):
-    """Regression: file CONTENT must go to upload/drive/v3. The plain
-    drive/v3 endpoint cannot parse a multipart body and answers
-    'Parse Error' (this broke the first real sync)."""
+    """Regression: file CONTENT must go to the upload endpoint
+    (upload/drive/v3) via the resumable protocol. The plain drive/v3
+    endpoint only does metadata (a multipart POST there answers
+    'Parse Error'), and multipart bodies to the upload endpoint
+    dropped the media part on this network."""
     backend, drv = drive["backend"], drive["drv"]
     doc = build_doc(tmdb_id=603, type="movie", title={"title": "Example"},
                     watch=[], device=None)
