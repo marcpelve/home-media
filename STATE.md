@@ -399,6 +399,27 @@ Full design: PLAN.md. This file tracks multi-session progress.
   made before this existed, so no re-authorize is needed. 204 tests pass
   (3 new complete_connect bootstrap tests + 1 lazy-bootstrap test,
   shared _make_oauth_drive_handler mock).
+- (2026-11-14) P-M4i (Drive upload fixes, found during live end-to-end
+  sync, direct patches): three successive failures, each verified live
+  against the real Drive account before the fix.
+  (a) `400 Parse Error` on every title push — file CONTENT must go to the
+  upload endpoint `https://www.googleapis.com/upload/drive/v3/files`,
+  never the metadata `drive/v3` (which can't parse multipart). Split
+  DriveBackend into `client` (metadata) + `upload_client` (uploads).
+  (b) Multipart media part silently dropped — every multipart variant
+  (form-data, related with/without Content-Disposition, base64) created
+  size-0 files on this network (confirmed curl AND httpx, so not a
+  client bug); media-only and the resumable protocol work. Switched
+  writes to the resumable protocol: POST/PUT metadata with
+  `?uploadType=resumable` -> `Location` session URL -> PUT raw media.
+  (c) `PUT /files/{id}` (plain and resumable) on the upload host is
+  unroutable here (HTML 404, curl-confirmed) — in-place content updates
+  are impossible. Updates now REPLACE: delete old file, create the new
+  version. Safe because the sync pushes every local title each run
+  (self-healing) and lookup is name-based (id swap invisible).
+  Commits: 5589cf9, 966a0db, b193f93. 205 tests pass. Live result:
+  sync {pushed: 30, pulled: 0, error: null}, Drive files contain valid
+  JSON docs.
 
 ## Session endpoint (2026-11-11) — GitHub release pipeline
 
