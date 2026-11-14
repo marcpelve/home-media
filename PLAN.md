@@ -388,7 +388,8 @@ P6 Packaging
 
 ## 16. Migration: Trakt -> Cloud-Storage Sync (appended)
 
-Status: PLANNED - not yet executed. Supersedes the Trakt-sync portions of S7
+Status: COMPLETE (2026-11-13). P-M0 decisions locked; P-M1..P-M6 executed
+(this session); P-M7 runbook below. Supersedes the Trakt-sync portions of S7
 (watch tracking model), S8.2 (Trakt endpoints), and P4 (Trakt tracking +
 sync). The local DB stays the live source of truth; Trakt is reduced to a
 one-time import; the shared record moves from Trakt to a per-title cloud
@@ -458,10 +459,42 @@ P-M6 Cutover + verification
   - Import: Trakt history lands in DB. Conflict: LWW correct.
   - Add test_storage.py + test_sync.py; update test_trakt.py (import-only).
 
-P-M7 Rollback / safety
-  - Schema additive -> no data loss. Trakt code kept (import) -> reversible.
-  - Cloud additive -> a failure never touches the local DB.
-  - Rollback = disable cloud sync, re-enable Trakt push (if scope opens).
+P-M7 Rollback / safety (runbook)
+  Safety properties (why each layer is safe to roll back):
+  - Schema additive: `device` was added via idempotent `ALTER TABLE ADD
+    COLUMN` in init_db (P-M1); the P-M4 device backfill is also idempotent.
+    Old builds ignore the new columns; no data can be lost by the schema.
+  - Cloud additive: every storage operation is wrapped per-title and
+    per-sync; a failed/absent backend (factory returns None) only skips the
+    sync iteration. Cloud failures never write to the local DB. Deleting the
+    cloud folder loses nothing locally — the local DB is the source of truth.
+  - Trakt kept: the client (device-flow auth) and the one-time import
+    (P-M5) remain; the removed ongoing-sync code is recoverable verbatim
+    from git history (the parent of f752580).
+
+  Rollback levels:
+  - L1 — stop Drive sync (keep local-folder snapshot sync):
+      `PUT /settings {"storage_backend": "local"}` (or delete the key).
+      make_cloud_backend() then builds a LocalFolderBackend rooted at
+      `data/storage` (machine-local, never shared), so the 5-minute loop
+      keeps writing a local snapshot and nothing reaches Google Drive.
+      No code change; effective on the next sync tick (~5 min).
+  - L2 — stop Drive permanently: L1 + delete the Drive credentials from
+      settings (drive_client_id/secret, drive_access_token/refresh_token,
+      drive_root_folder_id). The /drive/* routes then report disconnected.
+  - L3 — restore ongoing Trakt sync (only if Trakt's scrobble scope opens):
+      `git revert f752580` restores the deprecated Trakt push/pull/loop and
+      drops the one-time import; re-run the suite and re-merge.
+
+  Phase commits (main, unpushed as of P-M7):
+  - P-M1 08b4dda (device column + backfill)
+  - P-M2 b3fc6c6 (storage adapter core), 5a3fe05 (DriveBackend)
+  - P-M3 3e525a6 (sync engine), b663b87 (pusher + 5-min loop)
+  - P-M4 0afa7cc (OAuth + settings), 3c45574 (wiring + device stamping)
+  - P-M5 f752580 (one-time Trakt import; ongoing Trakt sync dropped)
+  - P-M6 14ec160 (cutover verification tests)
+  - P-M7 this section (doc-only)
+  193 tests pass on main.
 
 What does NOT change:
 - Local DB tables (titles, watch_progress) - additive columns only.

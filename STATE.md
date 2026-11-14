@@ -352,6 +352,16 @@ Full design: PLAN.md. This file tracks multi-session progress.
   two_devices (real LocalFolderBackend) — not duplicated. One opencode run:
   14ec160. 193 tests pass.
 
+- (2026-11-13) P-M7 (Trakt -> cloud-storage sync migration, PLAN.md S16):
+  rollback / safety, doc-only. PLAN.md S16 status flipped to COMPLETE and
+  the P-M7 placeholder became a runbook: safety properties (schema
+  additive, cloud failures never touch the local DB, Trakt import kept +
+  old sync code recoverable from git) and three rollback levels —
+  L1 set storage_backend='local' (Drive off, local-folder snapshot
+  continues), L2 L1 + delete Drive credentials, L3 `git revert f752580`
+  (restore ongoing Trakt sync, only if the scrobble scope opens). Phase
+  commit table appended. S16 is now fully executed.
+
 ## Session endpoint (2026-11-11) — GitHub release pipeline
 
 State: repo pushed to GitHub (`marcpelve/home-media`), branch `main`.
