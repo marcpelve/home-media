@@ -2131,39 +2131,48 @@ async function loadSyncStatus() {
     } catch (e) { if (msg) msg.textContent = "Save failed: " + e.message; }
   });
 
-  // Drive connect
+  // Drive connect. While the browser flow is in flight the button is
+  // disabled and a "cancel" link stops the wait; timeout also re-renders
+  // the panel clean so Connect Drive is always usable again.
+  let pollTimer = null;
+  const stopPoll = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } };
   const connBtn = document.getElementById("sync-drive-connect");
   if (connBtn) connBtn.addEventListener("click", async () => {
     const msg = document.getElementById("sync-connect-msg");
+    connBtn.disabled = true;
     if (msg) msg.textContent = "Starting\u2026";
     try {
       const res = await api("/drive/connect", { method: "POST" });
       openExternal(res.authorization_url);
-      if (msg) msg.textContent = "Waiting for browser authorization\u2026";
+      if (msg) {
+        msg.innerHTML = 'Waiting for browser authorization\u2026 ' +
+          '<a href="#" id="sync-connect-cancel" class="creds-toggle">cancel</a>';
+        const cancel = document.getElementById("sync-connect-cancel");
+        if (cancel) cancel.addEventListener("click", (e) => {
+          e.preventDefault();
+          stopPoll();
+          loadSyncStatus();
+        });
+      }
       // Poll /drive/status every ~2s for up to ~120s
       let attempts = 0;
-      const poll = setInterval(async () => {
+      pollTimer = setInterval(async () => {
         attempts++;
         if (attempts > 60) {
-          clearInterval(poll);
-          const p = document.getElementById("sync-panel");
-          if (p) {
-            p.innerHTML += '<p class="muted">Not connected yet \u2014 finish the browser flow and press Refresh</p>' +
-              '<button class="btn" id="sync-refresh">Refresh</button>';
-            const rb = document.getElementById("sync-refresh");
-            if (rb) rb.addEventListener("click", () => loadSyncStatus());
-          }
+          stopPoll();
+          loadSyncStatus();
           return;
         }
         try {
           const st = await api("/drive/status");
           if (st.connected) {
-            clearInterval(poll);
+            stopPoll();
             loadSyncStatus();
           }
         } catch (_) { /* keep polling */ }
       }, 2000);
     } catch (e) {
+      connBtn.disabled = false;
       if (msg) msg.textContent = "Connect failed: " + e.message;
     }
   });
