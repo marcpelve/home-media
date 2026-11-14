@@ -282,6 +282,34 @@ Full design: PLAN.md. This file tracks multi-session progress.
   gated on `sync_mode` being configured. Two opencode runs: 3e525a6 (engine
   + 9 tests), b663b87 (pusher + loop + 4 tests). 171 tests pass.
 
+- (2026-11-13) P-M4 (Trakt -> cloud-storage sync migration, PLAN.md S16):
+  OAuth connect + settings. `backend/app/drive_auth.py`: browser OAuth flow
+  (start_connect -> authorize URL + state in settings; complete_connect
+  validates state via compare_digest, exchanges the code, stores
+  access/refresh/expiry; refresh_token with 60s skew and rotated-refresh
+  handling) and `make_cloud_backend(db_path)` — builds the storage backend
+  from settings, refreshing an expired access token first, returning None
+  when Drive is not connected; every sync op gets a valid token (cached
+  access tokens expire ~1h). New `routers/drive.py`: POST /drive/connect
+  (browser URL), GET /drive/callback (stores tokens, "connected" page),
+  GET /drive/status. New `routers/settings.py`: GET/PUT /settings with a
+  whitelisted key set (storage_backend, storage_local_root, device_id,
+  drive_client_id/secret, drive_root_folder_id); tokens are only writable
+  by the OAuth flow. routers/sync.py now uses make_cloud_backend and the
+  factory key is `storage_backend` (fixed the P-M3 `sync_mode` naming slip).
+  main.py: fresh-token factory in the lifespan (startup pull best-effort,
+  fresh backend per 5-min loop iteration, pusher always constructed with
+  the factory). ProgressPusher reworked to take a backend factory; its
+  `_set_timer` now cancels the predecessor when two schedule() calls queue
+  callbacks before the loop runs (race that double-wrote a title doc —
+  exposed by the new tests). Device stamping: upsert_progress /
+  upsert_complete stamp `device` on INSERT and UPDATE; upsert_title INSERT
+  only (LWW owns device for existing titles). db.py `_migrate_default_device`
+  (idempotent, in init_db): one-time backfill of 'default'/NULL rows to the
+  configured device_id in both tables. Two opencode runs: 0afa7cc (OAuth +
+  settings + 11 tests), 3c45574 (wiring + stamping + 7 tests). 189 tests
+  pass.
+
 ## Session endpoint (2026-11-11) — GitHub release pipeline
 
 State: repo pushed to GitHub (`marcpelve/home-media`), branch `main`.
