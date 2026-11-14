@@ -1,48 +1,68 @@
 # Project Handoff: home-media
 
-**Date:** 2026-11-13 04:45
+**Date:** 2026-11-14 06:45
 **Branch:** main
-**Latest commit:** ea38dc8 (PLAN.md: add section 16 - Trakt to cloud-storage sync migration plan)
+**Latest commit:** 6fd6c48 (version: 0.2.0 — cloud storage sync migration)
 
 ## Done
-- Root-caused and fixed Trakt sync push=0 (two bugs in `backend/app/sync.py`):
-  1. `watch_progress.title_id` was treated as the local `titles.id`, but the app keys on TMDB id -> push + both pull paths now key on `tmdb_id` (commit `b31ffde`).
-  2. `mark_watched` POSTed to `/users/{id}/items/history` (GET-only; no POST exists) -> now `POST /scrobble/stop` with `{progress:100, episode|movie}`, 409 treated as success (commit `ec2d661`).
-- Verified against the live DB: all 47 watch_progress rows resolve and yield valid scrobble nodes. 136 tests pass.
-- pull=0 confirmed correct: Trakt history (100 items) has 0 overlap with the 19-title library.
-- Diagnosed the 400 on push: token scope is `public offline_access` (no `scrobble:post`); NOT an IP block. No self-serve/proven grant path; production access is premium-gated (rejected).
-- Designed + documented the migration from Trakt to cloud-storage sync as **PLAN.md section 16** (commit `ea38dc8`): local DB live peer + per-title cloud file (Google Drive, OAuth personal) + storage adapter + LWW merge by `updated_at`; Trakt demoted to a one-time import. Phases P-M0..P-M7.
-- (Earlier in the session) Rebuilt the frozen backend + Tauri app: fresh `desktop.exe` (Nov 13 02:01) with the `tmdb_id` fix but not the `/scrobble/stop` fix.
+- Cloud storage sync migration complete (P-M0–P-M7): Trakt ongoing sync
+  removed (demoted to one-time import), Google Drive is the sync backend
+  (per-title versioned JSON under `My Drive/HomeMedia/{movies,shows}/`).
+- P-M4i: Drive upload fixes — resumable-upload protocol for creates;
+  updates use replace (delete + create) because in-place `PUT /files/{id}`
+  is unroutable on this network (HTML 404, curl-confirmed).
+- P-M4j: sync speed — push only changed titles (data-ts LWW comparison),
+  parallel pull/push (8 workers), per-subfolder listing cache. Unchanged
+  sync: ~2s / 0 writes (was ~70s / 30 writes).
+- P-M4k: concurrent-replace race fix — process-wide per-title writer lock
+  serializes find+delete+create across backend instances (progress push
+  vs manual sync); a 404 on the replace's delete is tolerated.
+- v0.2.0 released: tag pushed, GitHub workflow built + signed + published
+  (installer, .sig files, updater zip, latest.json). Release verified,
+  updater manifest checked (version 0.2.0, signed).
+- Pre-push secrets scan: all 47 pushed commits (diffs + full history
+  incl. deletions) and the full tree are clean; only `.env.example`
+  (placeholders) carries credential names.
+- 214/214 backend tests pass.
 
 ## Current state
-- Repo `main`, clean. 10 unpushed commits (origin at `c3144e5`): ea38dc8, ec2d661, b31ffde, d907fbe, 911d0df, 2a1e0bd, 9095fcf, 0d387c0, 0cfaeaa, e14bc80.
-- Live DB `%LOCALAPPDATA%\HomeMedia\home_media.db`: 19 titles, 47 watch_progress rows (all tmdb_id=105971), Trakt authed, scope `public offline_access`.
-- Migration is PLANNED (PLAN.md S16), not executed. 136 tests pass. No servers running.
+- main == origin/main (fully pushed). Release run 43566163396 succeeded.
+- Release: https://github.com/marcpelve/home-media/releases/tag/v0.2.0
+- Local app running (port 8790) on the 0.2.0 build; Drive sync clean
+  (30 titles, last_error None).
+- Untracked local file: `desktop/src-tauri/build-tauri.bat` (MSVC toolchain
+  helper for local builds; the CI workflow does NOT use it). Decide whether
+  to commit or gitignore it.
 
 ## Blockers
-- None. Awaiting the user's go-ahead to start the migration (standing rule: no code until go-ahead).
-- Trakt `scrobble:post` scope is blocked, now moot — the new architecture doesn't depend on Trakt push.
+- None.
 
 ## Next steps
-1. User reviews PLAN.md S16; on go-ahead start P-M0 (confirm Drive-OAuth / device-id / file-format decisions; set up the Google Cloud project + OAuth desktop client).
-2. P-M1 add `device` column -> P-M2 `backend/app/storage.py` adapter -> P-M3 rewrite `sync.py` -> P-M4 hooks/config -> P-M5 one-time Trakt import -> P-M6 cutover/verify -> P-M7 rollback.
-3. The fresh `desktop.exe` predates the `/scrobble/stop` fix; rebuild only if that must ship (the migration supersedes Trakt push, so low priority).
-4. Push the 10 local commits only with explicit approval.
+1. Test the in-app updater on a real install: install 0.1.7, check for
+   update -> should find 0.2.0 via latest.json (updater path untested
+   end-to-end since v0.1.0).
+2. Decide the fate of `desktop/src-tauri/build-tauri.bat` (commit vs
+   gitignore).
+3. HANDOFF.md commit is local — push with the next explicit push.
 
 ## Key decisions
-- Local DB is the live offline-first peer (not a cache) and doubles as the offline outbox; the cloud is one file per title (metadata + watch state).
-- Sync = bidirectional last-write-wins merge by `updated_at` (deterministic, idempotent).
-- Storage adapter (`backend/app/storage.py`): `LocalFolder` + `Drive` (OAuth personal) behind one interface -> transport is swappable (Drive -> B2 -> local folder).
-- OAuth against a PERSONAL Google account (not a service account) — the user's familiar pattern.
-- Trakt demoted to a one-time import; the `/scrobble/stop` code is kept (deprecated) in case the scope ever opens.
-- Commit to main, concise messages, no AI attribution, no push/PR without being asked. No secrets in handoffs — reference by name only.
+- Replace-on-update (delete + create) for Drive writes: in-place content
+  updates are environmentally broken on this network; safe because sync
+  pushes all titles (self-healing) and lookup is name-based (id swap
+  invisible).
+- Per-title writer lock is process-wide (module-level), keyed by storage
+  key: the factory builds a fresh backend per call (token freshness), so
+  instance state can't serialize writers.
+- Selective push compares data ts = max(title row, watch rows)
+  `updated_at` — NOT the doc's top-level stamp (build time).
+- Rollback levels: L1 `storage_backend='local'`; L2 + delete Drive creds
+  from the local DB settings; L3 `git revert` the migration commits.
 
 ## References
-- `PLAN.md` S16 — the migration plan (this session's main deliverable).
-- `backend/app/sync.py` — push/pull; `_scrobble_node` builds the `/scrobble/stop` payload.
-- `backend/app/trakt.py` — `mark_watched` -> `POST /scrobble/stop`; `get_history()` for the one-time import.
-- `backend/tests/test_trakt.py` — mock intercepts `/scrobble/stop`.
-- `backend/app/db.py` — schema (S7 already has `updated_at`; the migration adds `device`).
-- Repo: `C:\ai\repos\home-media` · GitHub: `https://github.com/marcpelve/home-media` · last release tag `v0.1.7`.
-- Frozen config/data: `%LOCALAPPDATA%\HomeMedia\` (`home_media.db` holds keys incl. `trakt_*`, `torbox_api_key`; no `.env`).
-- Cloned Trakt API reference (scratch): `%LOCALAPPDATA%\hermes\cache\scratch\trakt-api`.
+- STATE.md — full phase log through P-M4k.
+- Key commits: 7e9a3b9 (listing cache), c0ae6a2 (selective + parallel
+  sync), 32c5cac (writer lock), 6fd6c48 (version).
+- Local DB: `%LOCALAPPDATA%\HomeMedia\home_media.db` (settings table holds
+  Drive/TMDB/Torbox credentials — never commit or print values).
+- Release workflow: `.github/workflows/release.yml` (tag `v*.*.*` trigger;
+  needs repo secret TAURI_SIGNING_PRIVATE_KEY, already set).
