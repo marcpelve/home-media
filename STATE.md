@@ -362,6 +362,16 @@ Full design: PLAN.md. This file tracks multi-session progress.
   (restore ongoing Trakt sync, only if the scrobble scope opens). Phase
   commit table appended. S16 is now fully executed.
 
+- (2026-11-13) P-M4f (follow-up found during local build/test): the executed
+  P-M4 was backend-only — the Settings UI its plan scoped ("backend
+  selection, device id, Drive Connect, sync status") was never built. Added
+  the Sync settings panel (device ID, backend select, Drive client id/secret,
+  Connect Drive via openExternal + /drive/status polling up to 120s, Sync
+  now, last-sync + pending readout) and fixed the doubled route paths
+  (prefix + decorator): /settings/settings -> /settings, /sync/sync ->
+  /sync, /sync/sync/status -> /sync/status. Nothing consumed the old paths.
+  One opencode run: 9e5412f. 193 tests pass.
+
 ## Session endpoint (2026-11-11) — GitHub release pipeline
 
 State: repo pushed to GitHub (`marcpelve/home-media`), branch `main`.
