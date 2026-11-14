@@ -16,6 +16,14 @@ def _conn(db_path: str | Path) -> sqlite3.Connection:
     return conn
 
 
+def _device_id(conn: sqlite3.Connection) -> str | None:
+    """This machine's device_id from settings (None when unset)."""
+    row = conn.execute(
+        "SELECT value FROM settings WHERE key = 'device_id'"
+    ).fetchone()
+    return row[0] if row else None
+
+
 def upsert_progress(
     db_path: str | Path,
     title_id: int,
@@ -28,6 +36,9 @@ def upsert_progress(
     """Insert or update the watch_progress row for a title (or episode)."""
     conn = _conn(db_path)
     try:
+        # Local observations are always this machine's id; a cloud pull can
+        # overwrite device later (LWW), and the next local write re-stamps.
+        device = _device_id(conn)
         row = conn.execute(
             "SELECT id FROM watch_progress WHERE title_id = ? "
             "AND season IS ? AND episode IS ?",
@@ -37,12 +48,13 @@ def upsert_progress(
             cur = conn.execute(
                 "INSERT INTO watch_progress "
                 "(title_id, season, episode, position_ms, duration_ms, "
-                " completed, completed_at, updated_at) "
+                " completed, completed_at, updated_at, device) "
                 "VALUES (?, ?, ?, ?, ?, ?, "
-                " CASE WHEN ? THEN datetime('now') ELSE NULL END, datetime('now'))",
+                " CASE WHEN ? THEN datetime('now') ELSE NULL END, "
+                " datetime('now'), ?)",
                 (
                     title_id, season, episode, position_ms, duration_ms,
-                    1 if completed else 0, 1 if completed else 0,
+                    1 if completed else 0, 1 if completed else 0, device,
                 ),
             )
             new_id = cur.lastrowid
@@ -56,10 +68,10 @@ def upsert_progress(
                 "completed = MAX(completed, ?), "
                 "completed_at = CASE WHEN completed = 0 AND ? = 1 "
                 "THEN datetime('now') ELSE completed_at END, "
-                "updated_at = datetime('now') WHERE id = ?",
+                "device = ?, updated_at = datetime('now') WHERE id = ?",
                 (
                     position_ms, duration_ms, completed_flag,
-                    completed_flag, new_id,
+                    completed_flag, device, new_id,
                 ),
             )
         conn.commit()
@@ -103,6 +115,8 @@ def upsert_complete(
     """
     conn = _conn(db_path)
     try:
+        # Local observation: always this machine's id (see upsert_progress).
+        device = _device_id(conn)
         row = conn.execute(
             "SELECT id FROM watch_progress WHERE title_id = ? "
             "AND season IS ? AND episode IS ?",
@@ -112,16 +126,16 @@ def upsert_complete(
             conn.execute(
                 "INSERT INTO watch_progress "
                 "(title_id, season, episode, position_ms, duration_ms, "
-                " completed, completed_at, updated_at) "
-                "VALUES (?, ?, ?, 0, 0, 1, datetime('now'), datetime('now'))",
-                (title_id, season, episode),
+                " completed, completed_at, updated_at, device) "
+                "VALUES (?, ?, ?, 0, 0, 1, datetime('now'), datetime('now'), ?)",
+                (title_id, season, episode, device),
             )
         else:
             conn.execute(
                 "UPDATE watch_progress SET completed = 1, "
-                "completed_at = datetime('now'), updated_at = datetime('now') "
-                "WHERE id = ?",
-                (row["id"],),
+                "completed_at = datetime('now'), device = ?, "
+                "updated_at = datetime('now') WHERE id = ?",
+                (device, row["id"]),
             )
         conn.commit()
         result = get_progress(db_path, title_id, season=season, episode=episode)

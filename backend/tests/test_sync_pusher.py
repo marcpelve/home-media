@@ -45,7 +45,7 @@ def test_pusher_debounces(tmp_path):
     be = CountingBackend(tmp_path / "store")
 
     async def run():
-        pusher = ProgressPusher(db, be, delay_s=0.05)
+        pusher = ProgressPusher(db, lambda: be, delay_s=0.05)
         pusher.schedule("movie:603")
         await asyncio.sleep(0.02)
         pusher.schedule("movie:603")
@@ -65,7 +65,8 @@ def test_pusher_flush(tmp_path):
     be = CountingBackend(tmp_path / "store")
 
     async def run():
-        pusher = ProgressPusher(db, be, delay_s=5.0)  # long delay so timer won't fire
+        # Long delay so the timer won't fire before flush().
+        pusher = ProgressPusher(db, lambda: be, delay_s=5.0)
         pusher.schedule("movie:603")
         return await pusher.flush()
 
@@ -83,7 +84,7 @@ def test_pusher_missing_title_noop(tmp_path):
     be = CountingBackend(tmp_path / "store")
 
     async def run():
-        pusher = ProgressPusher(db, be, delay_s=0.05)
+        pusher = ProgressPusher(db, lambda: be, delay_s=0.05)
         pusher.schedule("movie:999")
         await asyncio.sleep(0.2)
 

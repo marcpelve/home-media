@@ -84,6 +84,14 @@ def _name_from_files(files: list[dict]) -> str | None:
     return None
 
 
+def _device_id(conn: sqlite3.Connection) -> str | None:
+    """This machine's device_id from settings (None when unset)."""
+    row = conn.execute(
+        "SELECT value FROM settings WHERE key = 'device_id'"
+    ).fetchone()
+    return row[0] if row else None
+
+
 def build_library(db_path: str) -> dict:
     """Return the local library, grouped by title, from the DB only.
 
@@ -221,11 +229,15 @@ def upsert_title(db_path: str, tmdb_id: int, meta: dict) -> int:
     try:
         row = conn.execute("SELECT id FROM titles WHERE tmdb_id=?", (tmdb_id,)).fetchone()
         if row is None:
+            # INSERT-only device stamping: a fresh title is this machine's;
+            # the UPDATE path leaves device alone because the LWW merge owns
+            # it for existing titles (a cloud pull may have set it).
+            device = _device_id(conn)
             cur = conn.execute(
                 "INSERT INTO titles "
                 "(tmdb_id, imdb_id, type, title, year, poster_path, backdrop_path, "
-                " overview, runtime, updated_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))",
+                " overview, runtime, device, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'))",
                 (
                     tmdb_id,
                     meta.get("imdb_id") or (meta.get("external_ids") or {}).get("imdb_id"),
@@ -236,6 +248,7 @@ def upsert_title(db_path: str, tmdb_id: int, meta: dict) -> int:
                     meta.get("backdrop_path"),
                     meta.get("overview"),
                     meta.get("runtime"),
+                    device,
                 ),
             )
             new_id = cur.lastrowid

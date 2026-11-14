@@ -5,7 +5,7 @@ Run with:
 """
 
 import asyncio
-import sqlite3
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -13,8 +13,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import load_config
 from app.db import init_db
-from app.storage import create_backend
-from app.sync import ProgressPusher, sync_all, sync_all_cloud
+from app.drive_auth import make_cloud_backend
+from app.sync import ProgressPusher, pull, sync_all, sync_all_cloud
 from app.tmdb import TmdbClient
 from app.torbox import TorboxClient
 from app.downloads import DownloadManager
@@ -33,6 +33,8 @@ from app.routers.sync import router as sync_router
 from app.routers.drive import router as drive_router
 from app.routers.settings import router as settings_router
 
+log = logging.getLogger("app.main")
+
 # Load config at import; the DB path drives startup init. Secrets here are
 # only read, never logged.
 _config = load_config()
@@ -41,19 +43,9 @@ _config = load_config()
 # rows changed since the last push, so this stays far under Trakt's limits.
 TRAKT_SYNC_INTERVAL_S = 1800
 
-# Cloud sync cadence: full push+pull every 5 min. Only started when a
-# storage backend is configured (P-M3b).
+# Cloud sync cadence: full push+pull every 5 min. The loop always runs;
+# iterations with no connected backend (factory returns None) are skipped.
 CLOUD_SYNC_INTERVAL_S = 300
-
-
-def _settings(db_path) -> dict:
-    """Read the settings table into a dict (empty when the table is absent)."""
-    conn = sqlite3.connect(str(db_path))
-    try:
-        rows = conn.execute("SELECT key, value FROM settings").fetchall()
-        return dict(rows)
-    finally:
-        conn.close()
 
 
 async def do_trakt_sync(app: FastAPI) -> None:
@@ -71,16 +63,25 @@ async def _trakt_sync_loop(app: FastAPI) -> None:
 
 
 async def _cloud_sync_loop(app: FastAPI) -> None:
-    """Periodic full cloud sync (push + pull). Only started when a backend
-    is configured; failures are logged, never fatal."""
+    """Periodic full cloud sync (push + pull); failures are logged, never
+    fatal.
+
+    Each iteration builds a FRESH backend: the cached access token expires
+    ~1h, so this long-lived loop must not reuse one backend (the factory
+    also refreshes an expired token). None means Drive is not (yet)
+    connected; skip the iteration and retry on the next tick.
+    """
     while True:
         await asyncio.sleep(CLOUD_SYNC_INTERVAL_S)
+        backend = await asyncio.to_thread(
+            make_cloud_backend, app.state.db_path
+        )
+        if backend is None:
+            continue
         try:
-            await asyncio.to_thread(
-                sync_all_cloud, app.state.cloud_backend, app.state.db_path
-            )
-        except Exception:
-            pass
+            await asyncio.to_thread(sync_all_cloud, backend, app.state.db_path)
+        except Exception as e:
+            log.warning("cloud sync failed: %s", e)
 
 
 @asynccontextmanager
@@ -113,21 +114,31 @@ async def lifespan(app: FastAPI):
     app.state.trakt = TraktClient(
         client_id=_config.trakt_client_id, db_path=_config.db_path
     )
-    # Cloud storage backend + debounced pusher (P-M3b). The backend is None
-    # when sync_mode is not configured, which disables cloud sync entirely.
-    try:
-        app.state.cloud_backend = create_backend(_settings(_config.db_path))
-    except ValueError:
-        app.state.cloud_backend = None
-    app.state.pusher = (
-        ProgressPusher(_config.db_path, app.state.cloud_backend)
-        if app.state.cloud_backend else None
+    # Cloud storage backend (P-M4b): make_cloud_backend returns a backend
+    # with a valid token, or None when Drive is not connected — cloud sync
+    # stays disabled until the user connects (local mode is unaffected).
+    app.state.cloud_backend = make_cloud_backend(_config.db_path)
+    # Pusher takes a factory, not a backend: it outlives any single access
+    # token (which expires ~1h) and gets a fresh one per push. It can always
+    # be created; the factory returns None when not connected.
+    app.state.pusher = ProgressPusher(
+        _config.db_path,
+        lambda: make_cloud_backend(_config.db_path),
+        delay_s=30.0,
     )
+    # Startup pull: seed the local DB with the newest cloud docs. Best-effort
+    # and offline-safe — a failed pull must not block startup.
+    if app.state.cloud_backend is not None:
+        try:
+            await asyncio.to_thread(
+                pull, app.state.cloud_backend, _config.db_path
+            )
+        except Exception as e:
+            log.warning("startup cloud pull failed: %s", e)
     sync_task = asyncio.create_task(_trakt_sync_loop(app))
-    cloud_task = (
-        asyncio.create_task(_cloud_sync_loop(app))
-        if app.state.cloud_backend else None
-    )
+    # Always started: the loop builds a fresh backend each iteration, so a
+    # Drive connection made after startup is picked up on the next tick.
+    cloud_task = asyncio.create_task(_cloud_sync_loop(app))
     try:
         async with (
             app.state.tmdb_client,
@@ -138,11 +149,9 @@ async def lifespan(app: FastAPI):
             yield
     finally:
         # Flush pending pushes before cancelling tasks so no progress is lost.
-        if app.state.pusher:
-            await app.state.pusher.flush()
+        await app.state.pusher.flush()
         sync_task.cancel()
-        if cloud_task:
-            cloud_task.cancel()
+        cloud_task.cancel()
     app.state.mpv.stop()
 
 

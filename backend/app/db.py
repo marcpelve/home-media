@@ -140,6 +140,31 @@ def _migrate_device_column(conn: sqlite3.Connection) -> None:
             )
 
 
+def _migrate_default_device(conn: sqlite3.Connection) -> None:
+    """One-time backfill: rows still carrying the placeholder device
+    ('default' or NULL) adopt the configured device_id.
+
+    WHY: _migrate_device_column falls back to 'default' when device_id is
+    unset, so a DB created before the user set a real id keeps the
+    placeholder. Once a real id exists, only the placeholder rows should
+    follow it — rows with a genuine device are never touched. Idempotent:
+    after the first run no row matches COALESCE(device,'default')='default'
+    anymore.
+    """
+    row = conn.execute(
+        "SELECT value FROM settings WHERE key = 'device_id'"
+    ).fetchone()
+    device = row[0] if row else None
+    if device in (None, "local", "default"):
+        return
+    for table in ("titles", "watch_progress"):
+        conn.execute(
+            f"UPDATE {table} SET device = ? "
+            "WHERE COALESCE(device, 'default') = 'default'",
+            (device,),
+        )
+
+
 def init_db(db_path: str | Path) -> None:
     """Create the data directory (if needed) and all tables (if not present)."""
     path = Path(db_path)
@@ -148,6 +173,7 @@ def init_db(db_path: str | Path) -> None:
     try:
         conn.executescript(_SCHEMA)
         _migrate_device_column(conn)
+        _migrate_default_device(conn)
         conn.commit()
     finally:
         conn.close()

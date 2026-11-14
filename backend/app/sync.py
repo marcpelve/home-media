@@ -12,8 +12,9 @@ import asyncio
 import json
 import sqlite3
 from datetime import datetime, timezone
+from typing import Callable
 
-from app.storage import build_doc, make_key, parse_key
+from app.storage import StorageBackend, build_doc, make_key, parse_key
 from app.trakt import TraktAuthError, TraktClient
 
 
@@ -586,10 +587,19 @@ class ProgressPusher:
 
     The event loop is captured at init (lifespan startup, where a loop is
     running) so schedule() can be called from FastAPI's sync thread pool.
+
+    *make_backend* is a factory, not a backend: a backend holds an access
+    token that expires ~1h, while the pusher lives for the app's lifetime,
+    so it must get a fresh backend per push (the factory also refreshes the
+    token). A factory that returns None (Drive not connected) makes fire and
+    flush no-ops.
     """
-    def __init__(self, db_path, backend, delay_s: float = 30.0):
+    def __init__(
+        self, db_path, make_backend: Callable[[], StorageBackend | None],
+        delay_s: float = 30.0,
+    ):
         self._db_path = db_path
-        self._backend = backend
+        self._make_backend = make_backend
         self._delay_s = delay_s
         self._loop = asyncio.get_running_loop()
         self._timers: dict[str, asyncio.TimerHandle] = {}
@@ -605,6 +615,12 @@ class ProgressPusher:
         self._loop.call_soon_threadsafe(self._set_timer, key)
 
     def _set_timer(self, key: str) -> None:
+        # Two schedule() calls can queue two _set_timer callbacks before
+        # either runs (no await between them); cancel the predecessor so
+        # only the latest timer survives and fires once.
+        old = self._timers.get(key)
+        if old is not None:
+            old.cancel()
         self._timers[key] = self._loop.call_later(
             self._delay_s, self._fire, key
         )
@@ -612,8 +628,11 @@ class ProgressPusher:
     def _fire(self, key: str) -> None:
         self._timers.pop(key, None)
         self._pending.discard(key)
+        backend = self._make_backend()
+        if backend is None:
+            return  # not connected: skip; next full sync reconciles
         try:
-            push_title(self._backend, self._db_path, key)
+            push_title(backend, self._db_path, key)
         except Exception:
             pass  # next full sync reconciles; never crash the timer
 
@@ -628,10 +647,13 @@ class ProgressPusher:
         self._timers.clear()
         keys = sorted(self._pending)
         self._pending.clear()
+        backend = self._make_backend()
+        if backend is None:
+            return 0  # not connected: nothing to flush
         pushed = 0
         for key in keys:
             try:
-                if push_title(self._backend, self._db_path, key):
+                if push_title(backend, self._db_path, key):
                     pushed += 1
             except Exception:
                 pass
