@@ -91,6 +91,13 @@ CREATE TABLE IF NOT EXISTS trakt_sync (
     last_error    TEXT
 );
 
+CREATE TABLE IF NOT EXISTS sync_status (
+    last_sync_at  TEXT,
+    last_push_at  TEXT,
+    pending_count INTEGER NOT NULL DEFAULT 0,
+    last_error    TEXT
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT
