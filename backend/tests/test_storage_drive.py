@@ -17,6 +17,7 @@ FOLDER_MOVIES = "folder-movies"
 FOLDER_SHOWS = "folder-shows"
 FOLDER_MIME = "application/vnd.google-apps.folder"
 BASE_URL = "https://www.googleapis.com/drive/v3"
+UPLOAD_BASE_URL = "https://www.googleapis.com/upload/drive/v3"
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +58,7 @@ class InMemoryDrive:
         self._seq = 0
         self.post_count = 0
         self.put_count = 0
+        self.requests: list[tuple[str, str]] = []  # (method, raw path)
         # The root must contain both type subfolders.
         for fid, name in ((FOLDER_MOVIES, "movies"), (FOLDER_SHOWS, "shows")):
             self.files[fid] = {"name": name, "mimeType": FOLDER_MIME,
@@ -67,9 +69,15 @@ class InMemoryDrive:
         return f"file-{self._seq}"
 
     def handler(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append((request.method, request.url.path))
         # request.url.path includes the base_url path; strip it to get the
-        # Drive API route ("/files", "/files/<id>").
-        path = request.url.path.removeprefix("/drive/v3")
+        # Drive API route ("/files", "/files/<id>"). Uploads arrive on the
+        # upload/drive/v3 host, metadata on drive/v3.
+        path = request.url.path
+        for prefix in ("/upload/drive/v3", "/drive/v3"):
+            if path.startswith(prefix):
+                path = path.removeprefix(prefix)
+                break
         method = request.method
 
         if method == "GET" and path == "/files":
@@ -137,11 +145,15 @@ class InMemoryDrive:
 @pytest.fixture
 def drive():
     drv = InMemoryDrive()
-    client = httpx.Client(base_url=BASE_URL,
-                          transport=httpx.MockTransport(drv.handler))
-    backend = DriveBackend(TOKEN, ROOT, client=client)
-    yield {"backend": backend, "drv": drv, "client": client}
+    transport = httpx.MockTransport(drv.handler)
+    client = httpx.Client(base_url=BASE_URL, transport=transport)
+    upload_client = httpx.Client(base_url=UPLOAD_BASE_URL, transport=transport)
+    backend = DriveBackend(TOKEN, ROOT, client=client,
+                           upload_client=upload_client)
+    yield {"backend": backend, "drv": drv, "client": client,
+           "upload_client": upload_client}
     client.close()
+    upload_client.close()
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +204,23 @@ def test_drive_read_missing(drive):
     assert drive["backend"].read_title("movie:42") is None
 
 
+def test_drive_writes_use_upload_endpoint(drive):
+    """Regression: file CONTENT must go to upload/drive/v3. The plain
+    drive/v3 endpoint cannot parse a multipart body and answers
+    'Parse Error' (this broke the first real sync)."""
+    backend, drv = drive["backend"], drive["drv"]
+    doc = build_doc(tmdb_id=603, type="movie", title={"title": "Example"},
+                    watch=[], device=None)
+    backend.write_title("movie:603", doc)          # create
+    backend.write_title("movie:603", doc)          # update
+    writes = [p for m, p in drv.requests if m in ("POST", "PUT")]
+    assert writes, "expected create/update requests"
+    assert all(p.startswith("/upload/drive/v3/") for p in writes), writes
+    # Metadata traffic (searches, reads, deletes) stays on drive/v3.
+    reads = [p for m, p in drv.requests if m == "GET"]
+    assert all(p.startswith("/drive/v3/") for p in reads), reads
+
+
 def test_drive_delete(drive):
     backend = drive["backend"]
     doc = build_doc(tmdb_id=603, type="movie", title={"title": "M"},
@@ -215,10 +244,14 @@ def test_drive_4xx_raises():
 
     client = httpx.Client(base_url=BASE_URL,
                           transport=httpx.MockTransport(handler))
-    backend = DriveBackend(TOKEN, ROOT, client=client)
+    upload_client = httpx.Client(base_url=UPLOAD_BASE_URL,
+                                 transport=httpx.MockTransport(handler))
+    backend = DriveBackend(TOKEN, ROOT, client=client,
+                           upload_client=upload_client)
     with pytest.raises(RuntimeError, match="Drive API 500"):
         backend.read_title("movie:603")
     client.close()
+    upload_client.close()
 
 
 # ---------------------------------------------------------------------------
@@ -231,3 +264,4 @@ def test_create_backend_drive():
                         "drive_root_folder_id": ROOT})
     assert isinstance(b, DriveBackend)
     b.client.close()
+    b.upload_client.close()

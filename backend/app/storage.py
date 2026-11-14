@@ -176,10 +176,19 @@ class DriveBackend(StorageBackend):
 
     def __init__(self, access_token: str, root_folder_id: str,
                  *, base_url: str = "https://www.googleapis.com/drive/v3",
-                 client: httpx.Client | None = None):
+                 upload_base_url: str = "https://www.googleapis.com/upload/drive/v3",
+                 client: httpx.Client | None = None,
+                 upload_client: httpx.Client | None = None):
         self.access_token = access_token
         self.root_folder_id = root_folder_id
         self.client = client if client is not None else httpx.Client(base_url=base_url)
+        # File CONTENT goes to the upload endpoint (upload/drive/v3); the
+        # plain drive/v3 endpoint only does metadata and cannot parse a
+        # multipart body (it answers "Parse Error").
+        self.upload_client = (
+            upload_client if upload_client is not None
+            else httpx.Client(base_url=upload_base_url)
+        )
         # Folder ids are stable for the app's lifetime; caching them spares
         # a lookup request on every title operation.
         self._folders: dict[str, str] = {}
@@ -270,7 +279,7 @@ class DriveBackend(StorageBackend):
         if found is not None:
             # Update in place; metadata without parents is fine for a PUT.
             meta_json = json.dumps(meta)
-            resp = self.client.put(
+            resp = self.upload_client.put(
                 f"/files/{found['id']}", headers=self._headers(),
                 files={"metadata": (None, meta_json,
                                     "application/json; charset=UTF-8"),
@@ -279,8 +288,8 @@ class DriveBackend(StorageBackend):
             # Create: parents pins the new file under the type subfolder.
             meta["parents"] = [fid]
             meta_json = json.dumps(meta)
-            resp = self.client.post(
-                "/files", params={"fields": "file"}, headers=self._headers(),
+            resp = self.upload_client.post(
+                "/files", headers=self._headers(),
                 files={"metadata": (None, meta_json,
                                     "application/json; charset=UTF-8"),
                        "media": (name, content, "application/json")})
