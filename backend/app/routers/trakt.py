@@ -1,18 +1,17 @@
-"""Trakt auth + sync routes (Device Code Flow).
+"""Trakt auth + one-time import routes (Device Code Flow).
 
-POST /trakt/auth  -> start a device login, returns user_code + verification_url
-GET  /trakt/auth  -> poll the pending flow (pending|authorized|expired|none)
-GET  /trakt/status-> auth state + last sync result
-POST /trakt/sync  -> push local progress to Trakt + pull Trakt activity
+POST /trakt/auth           -> start a device login, returns user_code + verification_url
+GET  /trakt/auth           -> poll the pending flow (pending|authorized|expired|none)
+GET  /trakt/status         -> auth state + last import info
+POST /trakt/import         -> one-time import of the Trakt watch history (P-M5)
+GET  /trakt/recommendations -> read-only recommendations (kept)
 """
 
 from __future__ import annotations
 
-import sqlite3
-
 from fastapi import APIRouter, HTTPException, Request
 
-from app.sync import sync_all
+from app.sync import import_from_trakt, _get_setting
 from app.trakt import TraktAuthError
 
 router = APIRouter(prefix="/trakt", tags=["trakt"])
@@ -62,31 +61,28 @@ async def status(request: Request) -> dict:
                 tokens["expires_at"],
             )
             username = real
-    conn = sqlite3.connect(_db_path(request))
-    conn.row_factory = sqlite3.Row
-    row = conn.execute(
-        "SELECT * FROM trakt_sync ORDER BY last_sync_at DESC LIMIT 1"
-    ).fetchone()
-    conn.close()
+    db_path = _db_path(request)
+    last_at = _get_setting(db_path, "trakt_last_import_at")
+    last_count_raw = _get_setting(db_path, "trakt_last_import_count")
+    last_import = None
+    if last_at is not None:
+        last_import = {
+            "at": last_at,
+            "count": int(last_count_raw) if last_count_raw is not None else 0,
+        }
     return {
         "authenticated": client.is_authenticated(),
         "username": username,
-        "last_sync": (
-            {
-                "last_sync_at": row["last_sync_at"],
-                "pending_count": row["pending_count"],
-                "last_error": row["last_error"],
-            }
-            if row
-            else None
-        ),
+        "last_import": last_import,
     }
 
 
-@router.post("/sync")
-async def sync(request: Request) -> dict:
+@router.post("/import")
+async def trakt_import(request: Request) -> dict:
     client = _client(request)
-    return await sync_all(client, _db_path(request))
+    if not client.is_authenticated():
+        raise HTTPException(status_code=401, detail="not authenticated")
+    return await import_from_trakt(client, _db_path(request))
 
 
 @router.get("/recommendations")

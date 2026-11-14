@@ -1,9 +1,10 @@
-"""Trakt sync engine: push local watch progress to Trakt, pull Trakt
-watched/progress, and merge into the local watch_progress source of truth.
+"""Cloud storage sync engine + one-time Trakt import (P-M5).
 
-Local is authoritative. Trakt is a sync/backup layer that degrades gracefully
-when unauthenticated or offline (records an error, local keeps working).
-Merge rule: max position_ms per item, union of completed.
+Local is the source of truth. The cloud section syncs per-title JSON docs
+(storage.py) to a StorageBackend; the merge rule is LWW by updated_at.
+``import_from_trakt`` is a one-time import: Trakt watch history -> local
+titles + watch_progress, which the cloud sync then propagates. The ongoing
+Trakt sync (push/pull) was dropped in P-M5.
 """
 
 from __future__ import annotations
@@ -11,16 +12,10 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
-from datetime import datetime, timezone
 from typing import Callable
 
 from app.storage import StorageBackend, build_doc, make_key, parse_key
-from app.trakt import TraktAuthError, TraktClient
-
-
-def _now_iso() -> str:
-    """ISO 8601 UTC - for Trakt `played_at` fields."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+from app.trakt import TraktClient
 
 
 def _conn(db_path) -> sqlite3.Connection:
@@ -58,26 +53,6 @@ def _set_setting(db_path, key: str, value: str) -> None:
         conn.close()
 
 
-def _record_sync(db_path, pending_count: int, last_error: str | None) -> None:
-    conn = _conn(db_path)
-    try:
-        conn.execute("DELETE FROM trakt_sync")
-        conn.execute(
-            "INSERT INTO trakt_sync (last_sync_at, pending_count, last_error) "
-            "VALUES (?, ?, ?)",
-            (_now_sqlite(conn), pending_count, last_error),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def _local_title_by_tmdb(conn: sqlite3.Connection, tmdb_id: int) -> sqlite3.Row | None:
-    return conn.execute(
-        "SELECT * FROM titles WHERE tmdb_id = ?", (tmdb_id,)
-    ).fetchone()
-
-
 def _find_progress(
     conn: sqlite3.Connection, title_id: int, season: int | None, episode: int | None
 ) -> sqlite3.Row | None:
@@ -91,202 +66,149 @@ def _find_progress(
     ).fetchone()
 
 
-def _ep(node: dict, key: str) -> int | None:
-    ep = node.get("episode") or {}
-    val = ep.get(key)
-    return int(val) if isinstance(val, int) else None
+# --- One-time Trakt import (P-M5) ------------------------------------------------
+# Trakt watch history -> local titles + watch_progress. One-shot: the user
+# imports their past once, and the cloud sync below then propagates the rows.
+# LWW on progress: a strictly-newer local row wins (the user may have
+# re-watched and be mid-way locally).
 
 
-def _progress_ms(node: dict, entry: dict) -> tuple[int, int]:
-    """Convert Trakt node.runtime (min) + progress.percent to (ms, duration_ms)."""
-    runtime = node.get("runtime")
-    percent = (entry.get("progress") or {}).get("percent", 0.0)
-    if not isinstance(runtime, (int, float)) or not isinstance(percent, (int, float)):
-        return 0, 0
-    duration_ms = int(runtime * 60000)
-    position_ms = int(percent / 100.0 * duration_ms)
-    return position_ms, duration_ms
+def _parse_history_item(item: dict) -> dict | None:
+    """Extract (tmdb_id, type, title, year, season, episode, played_at) from a
+    Trakt history item. Returns None when the item carries no TMDB id.
 
-
-def _scrobble_node(title: sqlite3.Row, season: int | None, episode: int | None) -> dict | None:
-    """Build a Trakt scrobble body (progress 100 = watched) from a local title.
-
-    /scrobble/stop takes a single {progress, movie|episode} object. Movies need
-    title + year + ids; episodes need season + number + the show's ids (Trakt
-    resolves the episode from show-tmdb + season + number).
+    Movies key on (tmdb_id, None, None); episodes key on the SHOW's tmdb_id +
+    the episode's season/number (watch_progress is keyed by tmdb_id app-wide).
     """
-    if not title["tmdb_id"]:
-        return None
-    ids: dict = {"tmdb": title["tmdb_id"]}
-    if title["imdb_id"]:
-        ids["imdb"] = title["imdb_id"]
-    if title["type"] == "movie":
+    played_at = item.get("played_at") or ""
+    typ = item.get("type")
+    if typ == "movie":
+        node = item.get("movie") or {}
+        tmdb_id = (node.get("ids") or {}).get("tmdb")
+        if not tmdb_id:
+            return None
         return {
-            "progress": 100,
-            "movie": {
-                "title": title["title"],
-                "year": title["year"] or 0,
-                "ids": ids,
-            },
+            "tmdb_id": int(tmdb_id),
+            "type": "movie",
+            "title": node.get("title"),
+            "year": node.get("year"),
+            "season": None,
+            "episode": None,
+            "played_at": played_at,
         }
-    return {
-        "progress": 100,
-        "episode": {
-            "season": season or 1,
-            "number": episode or 1,
-            "ids": dict(ids),
-            "show": {"ids": dict(ids)},
-        },
-    }
+    if typ == "episode":
+        node = item.get("episode") or {}
+        show = node.get("show") or {}
+        tmdb_id = (show.get("ids") or {}).get("tmdb")
+        if not tmdb_id:
+            return None
+        return {
+            "tmdb_id": int(tmdb_id),
+            "type": "tv",
+            "title": show.get("title"),
+            "year": show.get("year"),
+            "season": node.get("season"),
+            "episode": node.get("number"),
+            "played_at": played_at,
+        }
+    return None
 
 
-async def push_progress(client: TraktClient, db_path) -> int:
-    """Scrobble local watch progress (updated since the last push) to Trakt.
+async def import_from_trakt(client: TraktClient, db_path) -> dict:
+    """One-time Trakt import (P-M5): the user's full watch history -> local DB.
 
-    DEPRECATED (P-M3): replaced by cloud sync; retained for the one-off Trakt
-    import (P-M5) and must not be extended.
-    Returns the number of items pushed. No-op (0) when unauthenticated.
+    Pulls the full history, dedupes replays (max played_at per
+    (tmdb_id, season, episode)), creates minimal titles rows for unknown
+    titles, and LWW-merges watch_progress (a strictly-newer local row wins).
+    The cloud sync then propagates the created rows. Returns
+    {imported, titles_created, skipped, error}. Per-item failures are recorded
+    in "error" and never abort the import.
     """
     if not client.is_authenticated():
-        return 0
+        return {
+            "imported": 0,
+            "titles_created": 0,
+            "skipped": 0,
+            "error": "not authenticated",
+        }
+    history = await client.get_all_history()
     conn = _conn(db_path)
-    try:
-        last_push = _get_setting(db_path, "trakt_last_push_at") or ""
-        rows = conn.execute(
-            "SELECT * FROM watch_progress WHERE updated_at > ?", (last_push,)
-        ).fetchall()
-        pushed = 0
-        for row in rows:
-            # watch_progress is keyed by tmdb_id app-wide (the frontend only
-            # knows TMDB ids), so resolve the title by tmdb_id, not titles.id.
-            title = conn.execute(
-                "SELECT * FROM titles WHERE tmdb_id = ?", (row["title_id"],)
-            ).fetchone()
-            if title is None:
-                continue
-            item = _scrobble_node(title, row["season"], row["episode"])
-            if item is None:
-                continue
-            await client.mark_watched(item)
-            pushed += 1
-        if pushed:
-            _set_setting(db_path, "trakt_last_push_at", _now_sqlite(conn))
-        return pushed
-    finally:
-        conn.close()
-
-
-async def pull_progress(client: TraktClient, db_path) -> tuple[int, list[str]]:
-    """Pull the user's Trakt watch history; merge into local progress.
-
-    DEPRECATED (P-M3): replaced by cloud sync; retained for the one-off Trakt
-    import (P-M5) and must not be extended.
-    Uses /users/{u}/history (history:read), which works without scrobble:post.
-    Returns (merged_count, partial_errors). No-op (0, []) when unauthenticated.
-    """
-    if not client.is_authenticated():
-        return 0, []
-    conn = _conn(db_path)
-    merged = 0
+    imported = 0
+    titles_created = 0
+    skipped = 0
     errors: list[str] = []
     try:
-        try:
-            history = await client.get_history()
-        except Exception as e:
-            errors.append(f"history: {type(e).__name__}")
-            history = []
+        device = _get_setting(db_path, "device_id") or "default"
+        now = _now_sqlite(conn)
+        # Dedupe replays: keep the max played_at per (tmdb_id, season, episode).
+        # played_at is ISO-8601 "…Z", so a lexicographic compare is safe.
+        deduped: dict[tuple, dict] = {}
         for item in history:
             if not isinstance(item, dict):
                 continue
-            typ = item.get("type")
-            if typ == "movie":
-                node = item.get("movie") or {}
-                tmdb_id = (node.get("ids") or {}).get("tmdb")
-                if not tmdb_id:
-                    continue
-                title = _local_title_by_tmdb(conn, int(tmdb_id))
+            parsed = _parse_history_item(item)
+            if parsed is None:
+                skipped += 1  # no TMDB id
+                continue
+            key = (parsed["tmdb_id"], parsed["season"], parsed["episode"])
+            cur = deduped.get(key)
+            if cur is None or parsed["played_at"] > cur["played_at"]:
+                deduped[key] = parsed
+        for p in deduped.values():
+            try:
+                # TITLE: create a minimal row only if the title is unknown.
+                title = conn.execute(
+                    "SELECT id FROM titles WHERE tmdb_id = ?", (p["tmdb_id"],)
+                ).fetchone()
                 if title is None:
-                    continue
-                # Keyed by tmdb_id app-wide (the frontend only knows TMDB ids),
-                # so match/insert on tmdb_id, not titles.id.
-                row = _find_progress(conn, int(tmdb_id), None, None)
-                if row is None:
                     conn.execute(
-                        "INSERT INTO watch_progress (title_id, position_ms, "
-                        "duration_ms, completed) VALUES (?, 0, 0, 1)",
-                        (int(tmdb_id),),
+                        "INSERT INTO titles (tmdb_id, type, title, year, device, "
+                        "updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                        (
+                            p["tmdb_id"], p["type"], p["title"], p["year"],
+                            device, now,
+                        ),
                     )
-                    merged += 1
-                elif not row["completed"]:
-                    conn.execute(
-                        "UPDATE watch_progress SET completed = 1, completed_at = ? "
-                        "WHERE id = ?",
-                        (_now_sqlite(conn), row["id"]),
-                    )
-                    merged += 1
-            elif typ == "episode":
-                node = item.get("episode") or {}
-                show_tmdb = ((node.get("show") or {}).get("ids") or {}).get("tmdb")
-                if not show_tmdb:
-                    continue
-                title = _local_title_by_tmdb(conn, int(show_tmdb))
-                if title is None:
-                    continue
-                season = node.get("season")
-                number = node.get("number")
-                # Keyed by tmdb_id app-wide (see movie branch).
-                row = _find_progress(conn, int(show_tmdb), season, number)
+                    titles_created += 1
+                # PROGRESS: LWW — a strictly-newer local row wins.
+                row = _find_progress(
+                    conn, p["tmdb_id"], p["season"], p["episode"]
+                )
                 if row is None:
                     conn.execute(
                         "INSERT INTO watch_progress (title_id, season, episode, "
-                        "position_ms, duration_ms, completed) "
-                        "VALUES (?, ?, ?, 0, 0, 1)",
-                        (int(show_tmdb), season, number),
+                        "completed, completed_at, device, updated_at) "
+                        "VALUES (?, ?, ?, 1, ?, ?, ?)",
+                        (
+                            p["tmdb_id"], p["season"], p["episode"],
+                            p["played_at"], device, now,
+                        ),
                     )
-                    merged += 1
-                elif not row["completed"]:
+                    imported += 1
+                elif normalize_ts(p["played_at"]) > normalize_ts(row["updated_at"]):
                     conn.execute(
-                        "UPDATE watch_progress SET completed = 1, completed_at = ? "
-                        "WHERE id = ?",
-                        (_now_sqlite(conn), row["id"]),
+                        "UPDATE watch_progress SET completed = 1, completed_at = "
+                        "?, device = ?, updated_at = ? WHERE id = ?",
+                        (p["played_at"], device, now, row["id"]),
                     )
-                    merged += 1
+                    imported += 1
+                else:
+                    skipped += 1  # local state wins
+            except Exception as e:
+                errors.append(f"{p['tmdb_id']}: {type(e).__name__}")
         conn.commit()
     finally:
         conn.close()
-    return merged, errors
-
-
-async def sync_all(client: TraktClient, db_path) -> dict:
-    """Push local changes to Trakt, pull Trakt activity, record status.
-
-    DEPRECATED (P-M3): replaced by cloud sync; retained for the one-off Trakt
-    import (P-M5) and must not be extended.
-    Degrades gracefully: no auth / offline / partial API failure -> no crash,
-    error recorded, local keeps working. Returns {pushed, pulled, error}.
-    """
-    if not client.is_authenticated():
-        _record_sync(db_path, 0, "not authenticated")
-        return {"pushed": 0, "pulled": 0, "error": "not authenticated"}
-    pushed = 0
-    pulled = 0
-    errors: list[str] = []
-    try:
-        pushed = await push_progress(client, db_path)
-    except TraktAuthError as e:
-        errors.append(f"push auth: {e}")
-    except Exception as e:
-        errors.append(f"push: {type(e).__name__}: {e}")
-    try:
-        pulled, pull_errors = await pull_progress(client, db_path)
-        errors.extend(pull_errors)
-    except TraktAuthError as e:
-        errors.append(f"pull auth: {e}")
-    except Exception as e:
-        errors.append(f"pull: {type(e).__name__}: {e}")
     error = "; ".join(errors) if errors else None
-    _record_sync(db_path, pushed + pulled, error)
-    return {"pushed": pushed, "pulled": pulled, "error": error}
+    # Record the import so /trakt/status can report it.
+    _set_setting(db_path, "trakt_last_import_at", now)
+    _set_setting(db_path, "trakt_last_import_count", str(imported))
+    return {
+        "imported": imported,
+        "titles_created": titles_created,
+        "skipped": skipped,
+        "error": error,
+    }
 
 
 # --- Cloud storage sync (P-M3) -------------------------------------------------

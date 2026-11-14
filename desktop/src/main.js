@@ -444,14 +444,12 @@ function openSettingsFor(panelId) {
   setTimeout(go, 40);
 }
 
-// ---- sync & quit ----
-// The power button fires a best-effort Trakt sync in the background (like
-// the source prefetch), then asks before quitting. Cancel: stay (the sync
-// finishes quietly). Confirm: stop playback and close the window.
+// ---- quit ----
+// The power button asks before quitting. Cancel: stay.
+// Confirm: stop playback and close the window.
 function exitAndSync() {
   const btn = document.getElementById("power");
   if (btn) { btn.classList.add("syncing"); btn.title = "Syncing..."; }
-  api("/trakt/sync", { method: "POST" }).catch(() => {});
   if (!confirm("Quit Home Media?")) return;
   if (nowPlaying) {
     api("/play/progress", {
@@ -1981,13 +1979,13 @@ async function loadTraktStatus() {
     panel.innerHTML = '<h2>Trakt</h2>' +
       '<p>Connected as <strong>' + esc(st.username || "unknown") + '</strong></p>' +
       syncLine +
-      '<button class="btn" id="trakt-sync">Sync now</button>' +
+      '<button class="btn" id="trakt-sync">Import from Trakt</button>' +
       '<p class="trakt-msg muted" id="trakt-msg"></p>';
     const b = document.getElementById("trakt-sync");
     if (b) b.addEventListener("click", doTraktSync);
   } else {
     panel.innerHTML = '<h2>Trakt</h2>' +
-      '<p class="muted">Not connected. Sign in to sync watch history and continue-watching.</p>' +
+      '<p class="muted">Not connected. Sign in to import your Trakt watch history one time.</p>' +
       '<button class="btn" id="trakt-signin">Sign in with Trakt</button>' +
       '<div class="trakt-auth-flow" id="trakt-auth-flow"></div>';
     const b = document.getElementById("trakt-signin");
@@ -2032,13 +2030,13 @@ function pollTraktAuth() {
 
 async function doTraktSync() {
   const msg = document.getElementById("trakt-msg");
-  if (msg) msg.textContent = "Syncing&hellip;";
+  if (msg) msg.textContent = "Importing&hellip;";
   let res;
-  try { res = await api("/trakt/sync", { method: "POST" }); }
-  catch (e) { if (msg) msg.textContent = "Sync failed: " + e.message; return; }
+  try { res = await api("/trakt/import", { method: "POST" }); }
+  catch (e) { if (msg) msg.textContent = "Import failed: " + e.message; return; }
   if (msg) msg.textContent = res.error
-    ? "Sync: " + res.error + " (pushed " + res.pushed + ", pulled " + res.pulled + ")"
-    : "Synced: pushed " + res.pushed + ", pulled " + res.pulled + ".";
+    ? "Import: " + res.error
+    : "Imported " + res.imported + " items.";
   setTimeout(loadTraktStatus, 600);
 }
 

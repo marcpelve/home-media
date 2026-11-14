@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import load_config
 from app.db import init_db
 from app.drive_auth import make_cloud_backend
-from app.sync import ProgressPusher, pull, sync_all, sync_all_cloud
+from app.sync import ProgressPusher, pull, sync_all_cloud
 from app.tmdb import TmdbClient
 from app.torbox import TorboxClient
 from app.downloads import DownloadManager
@@ -39,27 +39,9 @@ log = logging.getLogger("app.main")
 # only read, never logged.
 _config = load_config()
 
-# Best-effort Trakt sync cadence. A sync is one history GET plus only the
-# rows changed since the last push, so this stays far under Trakt's limits.
-TRAKT_SYNC_INTERVAL_S = 1800
-
 # Cloud sync cadence: full push+pull every 5 min. The loop always runs;
 # iterations with no connected backend (factory returns None) are skipped.
 CLOUD_SYNC_INTERVAL_S = 300
-
-
-async def do_trakt_sync(app: FastAPI) -> None:
-    """One best-effort sync; the local DB stays the source of truth on failure."""
-    try:
-        await sync_all(app.state.trakt, app.state.db_path)
-    except Exception:
-        pass
-
-
-async def _trakt_sync_loop(app: FastAPI) -> None:
-    while True:
-        await asyncio.sleep(TRAKT_SYNC_INTERVAL_S)
-        await do_trakt_sync(app)
 
 
 async def _cloud_sync_loop(app: FastAPI) -> None:
@@ -135,7 +117,6 @@ async def lifespan(app: FastAPI):
             )
         except Exception as e:
             log.warning("startup cloud pull failed: %s", e)
-    sync_task = asyncio.create_task(_trakt_sync_loop(app))
     # Always started: the loop builds a fresh backend each iteration, so a
     # Drive connection made after startup is picked up on the next tick.
     cloud_task = asyncio.create_task(_cloud_sync_loop(app))
@@ -150,7 +131,6 @@ async def lifespan(app: FastAPI):
     finally:
         # Flush pending pushes before cancelling tasks so no progress is lost.
         await app.state.pusher.flush()
-        sync_task.cancel()
         cloud_task.cancel()
     app.state.mpv.stop()
 

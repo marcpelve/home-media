@@ -349,19 +349,6 @@ class TraktClient:
         }
         return await self._request_with_retry("POST", path, headers=headers, json=json_body)
 
-    async def mark_watched(self, item: dict) -> list:
-        """Scrobble one item (movie or episode) as finished via /scrobble/stop.
-
-        progress 100 marks it watched. A 409 means it was just scrobbled
-        (duplicate) — treat as success so re-syncs stay idempotent.
-        """
-        resp = await self._authed_post("/scrobble/stop", item)
-        if resp.status_code == 409:
-            return []
-        resp.raise_for_status()
-        data = resp.json()
-        return data if isinstance(data, list) else [data]
-
     async def get_watched_movies(self) -> list:
         username = self._username()
         resp = await self._authed_get(
@@ -382,6 +369,32 @@ class TraktClient:
         )
         resp.raise_for_status()
         return resp.json()
+
+    async def get_all_history(self) -> list:
+        """The user's FULL watch history, paginated (newest first).
+
+        Loops /users/{u}/history with page=1,2,3,... (limit 100 each) and
+        stops when a batch has fewer than 100 items (or is empty). 429 retry
+        is handled by _authed_get. Batches are appended in order, so the
+        result stays newest-first.
+        """
+        username = self._username()
+        out: list = []
+        page = 1
+        while True:
+            resp = await self._authed_get(
+                f"/users/{username}/history",
+                {"extended": "full", "limit": 100, "page": page},
+            )
+            resp.raise_for_status()
+            batch = resp.json()
+            if not isinstance(batch, list):
+                batch = []
+            out.extend(batch)
+            if len(batch) < 100:
+                break
+            page += 1
+        return out
 
     async def get_watched_episodes(self, show_tmdb_id: int) -> list:
         username = self._username()

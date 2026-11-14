@@ -1,7 +1,9 @@
-"""Trakt client + sync tests using httpx.MockTransport (no real API calls).
+"""Trakt client + one-time import tests using httpx.MockTransport (no real
+API calls).
 
 Covers: device-code flow, single-use token rotation, Bearer data calls, 429
-retry, push/pull merge, and graceful degradation when unauthenticated.
+retry, the one-time Trakt import (P-M5), and graceful degradation when
+unauthenticated.
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ from fastapi.testclient import TestClient
 
 from app.db import init_db
 from app.trakt import TraktAuthError, TraktClient
-from app.sync import push_progress, pull_progress, sync_all
+from app.sync import import_from_trakt
 from app.routers.trakt import router as trakt_router
 
 MOCK_ID = "test_client_id"
@@ -367,31 +369,6 @@ def test_get_access_token_not_authenticated(trakt_env):
 # Data calls
 # ---------------------------------------------------------------------------
 
-def test_mark_watched_sends_bearer(trakt_env):
-    client = trakt_env["client"]
-    state = trakt_env["state"]
-    client.save_tokens(USER, "at1", "rt1", FRESH)
-
-    async def run():
-        async with client:
-            return await client.mark_watched(
-                {
-                    "progress": 100,
-                    "movie": {
-                        "title": "Star Wars: Episode I",
-                        "year": 1999,
-                        "ids": {"tmdb": 155},
-                    },
-                }
-            )
-
-    result = asyncio.run(run())
-    assert isinstance(result, list)
-    scrob = state["scrobbles"][0]
-    assert scrob.headers.get("authorization") == "Bearer at1"
-    assert scrob.url.path == "/scrobble/stop"
-
-
 def test_429_retry(tmp_path: Path):
     db_path = _db(tmp_path)
     state = {"count": 0}
@@ -422,71 +399,44 @@ def test_429_retry(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# Sync engine
+# One-time Trakt import (P-M5)
 # ---------------------------------------------------------------------------
 
-def test_push_progress_scrobbles_local_rows(trakt_env):
-    """watch_progress.title_id holds the TMDB id (how the app writes it); push
-    must resolve the title by tmdb_id and scrobble it."""
-    client = trakt_env["client"]
-    db = trakt_env["db"]
-    conn = sqlite3.connect(db)
-    conn.execute(
-        "INSERT INTO titles (tmdb_id, type, title) VALUES (155, 'movie', 'T')"
-    )
-    conn.execute(
-        "INSERT INTO watch_progress (title_id, position_ms, duration_ms) "
-        "VALUES (?, 1000, 60000)",
-        (155,),  # TMDB id, not the local titles.id
-    )
-    conn.commit()
-    conn.close()
-    client.save_tokens(USER, "at1", "rt1", FRESH)
+def _client_with_history(tmp_path: Path, history_payload: list):
+    """An authenticated TraktClient whose /history returns *history_payload*.
 
-    async def run():
-        async with client:
-            return await push_progress(client, db)
-
-    assert asyncio.run(run()) == 1
-    scrob = trakt_env["state"]["scrobbles"][0]
-    body = scrob.content.decode()
-    assert "155" in body  # tmdb id in the scrobble
-
-
-def test_push_progress_noop_unauthenticated(trakt_env):
-    client = trakt_env["client"]
-    db = trakt_env["db"]
-
-    async def run():
-        async with client:
-            return await push_progress(client, db)
-
-    assert asyncio.run(run()) == 0
-
-
-def test_pull_progress_merges_episode_from_history(tmp_path: Path):
+    Returns (client, db_path, http_client). The payload has fewer than 100
+    items so get_all_history() returns it after page 1.
+    """
     db_path = _db(tmp_path)
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        "INSERT INTO titles (tmdb_id, type, title) VALUES (66732, 'tv', 'S')"
-    )
-    conn.commit()
-    conn.close()
     state = {"scrobbles": []}
-    history_payload = [
-        {
-            "type": "episode",
-            "episode": {
-                "ids": {"tmdb": 99999},
-                "show": {"ids": {"tmdb": 66732}},
-                "season": 1,
-                "number": 2,
-            },
-        }
-    ]
-    transport = httpx.MockTransport(
-        _make_handler(state, [], [], history_payload)
+    transport = httpx.MockTransport(_make_handler(state, [], [], history_payload))
+    http_client = httpx.AsyncClient(
+        base_url="https://api.trakt.tv", transport=transport
     )
+    client = TraktClient(client_id=MOCK_ID, db_path=db_path, client=http_client)
+    client.save_tokens(USER, "at1", "rt1", FRESH)
+    return client, db_path, http_client
+
+
+def test_get_all_history_paginates(tmp_path: Path):
+    """get_all_history loops pages until a short batch: 100+100+37 -> 237."""
+    db_path = _db(tmp_path)
+    pages = {
+        "1": [{"i": n} for n in range(100)],
+        "2": [{"i": n} for n in range(100, 200)],
+        "3": [{"i": n} for n in range(200, 237)],
+    }
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/history"):
+            page = request.url.params.get("page", "1")
+            requested.append(page)
+            return httpx.Response(200, json=pages.get(page, []))
+        return httpx.Response(404, json={})
+
+    transport = httpx.MockTransport(handler)
     http_client = httpx.AsyncClient(
         base_url="https://api.trakt.tv", transport=transport
     )
@@ -495,90 +445,396 @@ def test_pull_progress_merges_episode_from_history(tmp_path: Path):
 
     async def run():
         async with client:
-            return await pull_progress(client, db_path)
+            return await client.get_all_history()
 
-    merged, errors = asyncio.run(run())
-    assert errors == []
-    assert merged == 1
-    conn = sqlite3.connect(db_path)
+    result = asyncio.run(run())
+    assert len(result) == 237
+    assert requested == ["1", "2", "3"]  # pages requested in order
+    asyncio.run(http_client.aclose())
+
+
+def test_import_movie_creates_title_and_row(tmp_path: Path):
+    """A movie history item with no local title creates a minimal titles row +
+    a completed watch_progress row (completed_at = played_at verbatim)."""
+    history = [
+        {
+            "type": "movie",
+            "played_at": "2025-06-01T12:00:00Z",
+            "movie": {"ids": {"tmdb": 155}, "title": "Star Wars", "year": 1999},
+        }
+    ]
+    client, db, http_client = _client_with_history(tmp_path, history)
+
+    async def run():
+        async with client:
+            return await import_from_trakt(client, db)
+
+    result = asyncio.run(run())
+    assert result == {
+        "imported": 1, "titles_created": 1, "skipped": 0, "error": None
+    }
+    conn = sqlite3.connect(db)
     conn.row_factory = sqlite3.Row
+    t = conn.execute("SELECT * FROM titles WHERE tmdb_id = ?", (155,)).fetchone()
+    row = conn.execute(
+        "SELECT * FROM watch_progress WHERE title_id = ?", (155,)
+    ).fetchone()
+    conn.close()
+    assert t is not None
+    assert t["type"] == "movie"
+    assert t["title"] == "Star Wars"
+    assert t["year"] == 1999
+    assert t["device"] == "default"  # device stamped (device_id unset)
+    assert row is not None
+    assert row["completed"] == 1
+    assert row["completed_at"] == "2025-06-01T12:00:00Z"  # verbatim
+    assert row["season"] is None
+    assert row["episode"] is None
+    assert row["device"] == "default"
+    asyncio.run(http_client.aclose())
+
+
+def test_import_episode(tmp_path: Path):
+    """An episode history item keys the row on the SHOW's tmdb + season/number."""
+    history = [
+        {
+            "type": "episode",
+            "played_at": "2025-07-02T09:30:00Z",
+            "episode": {
+                "ids": {"tmdb": 99999},
+                "show": {"ids": {"tmdb": 66732}, "title": "Show", "year": 2020},
+                "season": 2,
+                "number": 5,
+            },
+        }
+    ]
+    client, db, http_client = _client_with_history(tmp_path, history)
+
+    async def run():
+        async with client:
+            return await import_from_trakt(client, db)
+
+    result = asyncio.run(run())
+    assert result["imported"] == 1
+    assert result["titles_created"] == 1
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    t = conn.execute("SELECT * FROM titles WHERE tmdb_id = ?", (66732,)).fetchone()
     row = conn.execute(
         "SELECT * FROM watch_progress WHERE title_id = ?", (66732,)
     ).fetchone()
     conn.close()
+    assert t is not None
+    assert t["type"] == "tv"
     assert row is not None
-    assert row["season"] == 1
-    assert row["episode"] == 2
+    assert row["season"] == 2
+    assert row["episode"] == 5
     assert row["completed"] == 1
+    assert row["completed_at"] == "2025-07-02T09:30:00Z"
+    asyncio.run(http_client.aclose())
 
 
-def test_pull_progress_marks_watched_movie_completed(tmp_path: Path):
+def test_import_dedupes_replays(tmp_path: Path):
+    """The same episode watched twice yields exactly one row, with the LATER
+    played_at as completed_at."""
+    history = [
+        {
+            "type": "episode",
+            "played_at": "2025-07-02T09:30:00Z",
+            "episode": {
+                "ids": {"tmdb": 99999},
+                "show": {"ids": {"tmdb": 66732}, "title": "Sh", "year": 2011},
+                "season": 1,
+                "number": 2,
+            },
+        },
+        {
+            "type": "episode",
+            "played_at": "2025-08-01T10:00:00Z",  # later replay
+            "episode": {
+                "ids": {"tmdb": 99999},
+                "show": {"ids": {"tmdb": 66732}, "title": "Sh", "year": 2011},
+                "season": 1,
+                "number": 2,
+            },
+        },
+    ]
+    client, db, http_client = _client_with_history(tmp_path, history)
+
+    async def run():
+        async with client:
+            return await import_from_trakt(client, db)
+
+    result = asyncio.run(run())
+    assert result["imported"] == 1  # deduped to one
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT * FROM watch_progress WHERE title_id = ?", (66732,)
+    ).fetchall()
+    conn.close()
+    assert len(rows) == 1
+    assert rows[0]["completed_at"] == "2025-08-01T10:00:00Z"  # the later one
+    asyncio.run(http_client.aclose())
+
+
+def test_import_lww_local_newer_wins(tmp_path: Path):
+    """A local in-progress row newer than played_at is left untouched."""
     db_path = _db(tmp_path)
     conn = sqlite3.connect(db_path)
     conn.execute(
         "INSERT INTO titles (tmdb_id, type, title) VALUES (155, 'movie', 'T')"
     )
+    conn.execute(
+        "INSERT INTO watch_progress (title_id, position_ms, duration_ms, "
+        "completed, updated_at) VALUES (?, 5000, 60000, 0, ?)",
+        (155, "2026-01-01 00:00:00"),  # newer than played_at
+    )
     conn.commit()
     conn.close()
-    state = {"scrobbles": []}
-    history_payload = [
-        {"type": "movie", "movie": {"ids": {"tmdb": 155}}}
+    history = [
+        {
+            "type": "movie",
+            "played_at": "2025-06-01T12:00:00Z",
+            "movie": {"ids": {"tmdb": 155}, "title": "Star Wars", "year": 1999},
+        }
     ]
-    transport = httpx.MockTransport(
-        _make_handler(state, [], [], history_payload)
-    )
-    http_client = httpx.AsyncClient(
-        base_url="https://api.trakt.tv", transport=transport
-    )
-    client = TraktClient(client_id=MOCK_ID, db_path=db_path, client=http_client)
-    client.save_tokens(USER, "at1", "rt1", FRESH)
+    client, db, http_client = _client_with_history(tmp_path, history)
 
     async def run():
         async with client:
-            return await pull_progress(client, db_path)
+            return await import_from_trakt(client, db)
 
-    merged, errors = asyncio.run(run())
-    assert errors == []
-    assert merged == 1
-    conn = sqlite3.connect(db_path)
+    result = asyncio.run(run())
+    assert result["imported"] == 0
+    assert result["skipped"] == 1
+    conn = sqlite3.connect(db)
     conn.row_factory = sqlite3.Row
     row = conn.execute(
         "SELECT * FROM watch_progress WHERE title_id = ?", (155,)
     ).fetchone()
     conn.close()
-    assert row is not None
-    assert row["completed"] == 1
+    assert row["completed"] == 0  # untouched
+    assert row["updated_at"] == "2026-01-01 00:00:00"  # untouched
+    asyncio.run(http_client.aclose())
 
 
-def test_sync_all_not_authenticated(trakt_env):
-    client = trakt_env["client"]
-    db = trakt_env["db"]
+def test_import_lww_trakt_newer_wins(tmp_path: Path):
+    """A local row older than played_at is marked completed with played_at."""
+    db_path = _db(tmp_path)
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO titles (tmdb_id, type, title) VALUES (155, 'movie', 'T')"
+    )
+    conn.execute(
+        "INSERT INTO watch_progress (title_id, position_ms, duration_ms, "
+        "completed, updated_at) VALUES (?, 5000, 60000, 0, ?)",
+        (155, "2024-01-01 00:00:00"),  # older than played_at
+    )
+    conn.commit()
+    conn.close()
+    history = [
+        {
+            "type": "movie",
+            "played_at": "2025-06-01T12:00:00Z",
+            "movie": {"ids": {"tmdb": 155}, "title": "Star Wars", "year": 1999},
+        }
+    ]
+    client, db, http_client = _client_with_history(tmp_path, history)
 
     async def run():
         async with client:
-            return await sync_all(client, db)
+            return await import_from_trakt(client, db)
 
     result = asyncio.run(run())
-    assert result == {"pushed": 0, "pulled": 0, "error": "not authenticated"}
-
-
-def test_sync_all_records_status(trakt_env):
-    client = trakt_env["client"]
-    db = trakt_env["db"]
-    client.save_tokens(USER, "at1", "rt1", FRESH)
-
-    async def run():
-        async with client:
-            return await sync_all(client, db)
-
-    result = asyncio.run(run())
-    assert result["error"] is None
+    assert result["imported"] == 1
+    assert result["skipped"] == 0
     conn = sqlite3.connect(db)
     conn.row_factory = sqlite3.Row
-    row = conn.execute("SELECT * FROM trakt_sync").fetchone()
+    row = conn.execute(
+        "SELECT * FROM watch_progress WHERE title_id = ?", (155,)
+    ).fetchone()
     conn.close()
-    assert row is not None
-    assert row["last_sync_at"] is not None
+    assert row["completed"] == 1
+    assert row["completed_at"] == "2025-06-01T12:00:00Z"
+    asyncio.run(http_client.aclose())
+
+
+def test_import_existing_title_not_recreated(tmp_path: Path):
+    """A title already in the DB is not re-created (titles_created == 0)."""
+    db_path = _db(tmp_path)
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO titles (tmdb_id, type, title) VALUES (155, 'movie', 'Existing')"
+    )
+    conn.commit()
+    conn.close()
+    history = [
+        {
+            "type": "movie",
+            "played_at": "2025-06-01T12:00:00Z",
+            "movie": {"ids": {"tmdb": 155}, "title": "Star Wars", "year": 1999},
+        }
+    ]
+    client, db, http_client = _client_with_history(tmp_path, history)
+
+    async def run():
+        async with client:
+            return await import_from_trakt(client, db)
+
+    result = asyncio.run(run())
+    assert result["imported"] == 1
+    assert result["titles_created"] == 0  # title already existed
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    t = conn.execute("SELECT * FROM titles WHERE tmdb_id = ?", (155,)).fetchone()
+    conn.close()
+    assert t["title"] == "Existing"  # not overwritten
+    asyncio.run(http_client.aclose())
+
+
+def test_import_unauthenticated(tmp_path: Path):
+    """No tokens -> a clean 'not authenticated' result and no DB writes."""
+    db_path = _db(tmp_path)
+    state = {"scrobbles": []}
+    transport = httpx.MockTransport(_make_handler(state, [], [], []))
+    http_client = httpx.AsyncClient(
+        base_url="https://api.trakt.tv", transport=transport
+    )
+    client = TraktClient(client_id=MOCK_ID, db_path=db_path, client=http_client)
+
+    async def run():
+        async with client:
+            return await import_from_trakt(client, db_path)
+
+    result = asyncio.run(run())
+    assert result == {
+        "imported": 0, "titles_created": 0, "skipped": 0,
+        "error": "not authenticated",
+    }
+    conn = sqlite3.connect(db_path)
+    n_titles = conn.execute("SELECT COUNT(*) FROM titles").fetchone()[0]
+    n_prog = conn.execute("SELECT COUNT(*) FROM watch_progress").fetchone()[0]
+    conn.close()
+    assert n_titles == 0
+    assert n_prog == 0
+    asyncio.run(http_client.aclose())
+
+
+def test_import_idempotent(tmp_path: Path):
+    """Running the import twice with the same history imports 0 the second
+    time (the first run stamped updated_at=now > played_at)."""
+    db_path = _db(tmp_path)
+    history = [
+        {
+            "type": "movie",
+            "played_at": "2025-06-01T12:00:00Z",
+            "movie": {"ids": {"tmdb": 155}, "title": "Star Wars", "year": 1999},
+        }
+    ]
+    client, db, http_client = _client_with_history(tmp_path, history)
+
+    async def run():
+        async with client:
+            r1 = await import_from_trakt(client, db)
+            r2 = await import_from_trakt(client, db)
+            return r1, r2
+
+    r1, r2 = asyncio.run(run())
+    assert r1["imported"] == 1
+    assert r2["imported"] == 0  # idempotent
+    asyncio.run(http_client.aclose())
+
+
+def test_import_route(tmp_path: Path):
+    """POST /trakt/import: 401 unauthenticated; 200 with counts when authed."""
+    db_path = _db(tmp_path)
+    # Unauthenticated -> 401.
+    state = {"scrobbles": []}
+    transport = httpx.MockTransport(_make_handler(state, [], [], []))
+    http_client = httpx.AsyncClient(
+        base_url="https://api.trakt.tv", transport=transport
+    )
+    client = TraktClient(client_id=MOCK_ID, db_path=db_path, client=http_client)
+    app = FastAPI()
+    app.include_router(trakt_router)
+    app.state.trakt = client
+    app.state.db_path = db_path
+    with TestClient(app) as c:
+        r = c.post("/trakt/import")
+        assert r.status_code == 401
+    asyncio.run(http_client.aclose())
+
+    # Authenticated -> 200 with counts.
+    history = [
+        {
+            "type": "movie",
+            "played_at": "2025-06-01T12:00:00Z",
+            "movie": {"ids": {"tmdb": 155}, "title": "Star Wars", "year": 1999},
+        }
+    ]
+    state2 = {"scrobbles": []}
+    transport2 = httpx.MockTransport(_make_handler(state2, [], [], history))
+    http_client2 = httpx.AsyncClient(
+        base_url="https://api.trakt.tv", transport=transport2
+    )
+    client2 = TraktClient(client_id=MOCK_ID, db_path=db_path, client=http_client2)
+    client2.save_tokens(USER, "at1", "rt1", FRESH)
+    app2 = FastAPI()
+    app2.include_router(trakt_router)
+    app2.state.trakt = client2
+    app2.state.db_path = db_path
+    with TestClient(app2) as c:
+        r = c.post("/trakt/import")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["imported"] == 1
+        assert data["titles_created"] == 1
+        assert data["error"] is None
+    asyncio.run(http_client2.aclose())
+
+
+def test_import_records_status(tmp_path: Path):
+    """After an import, settings carry the import status and GET /trakt/status
+    reports last_import."""
+    db_path = _db(tmp_path)
+    history = [
+        {
+            "type": "movie",
+            "played_at": "2025-06-01T12:00:00Z",
+            "movie": {"ids": {"tmdb": 155}, "title": "Star Wars", "year": 1999},
+        }
+    ]
+    client, db, http_client = _client_with_history(tmp_path, history)
+
+    async def run():
+        async with client:
+            return await import_from_trakt(client, db)
+
+    asyncio.run(run())
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    at = conn.execute(
+        "SELECT value FROM settings WHERE key = 'trakt_last_import_at'"
+    ).fetchone()
+    cnt = conn.execute(
+        "SELECT value FROM settings WHERE key = 'trakt_last_import_count'"
+    ).fetchone()
+    conn.close()
+    assert at is not None and at["value"] is not None
+    assert cnt is not None and cnt["value"] == "1"
+    app = FastAPI()
+    app.include_router(trakt_router)
+    app.state.trakt = client
+    app.state.db_path = db
+    with TestClient(app) as c:
+        r = c.get("/trakt/status")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["last_import"] is not None
+        assert data["last_import"]["count"] == 1
+        assert data["last_import"]["at"] is not None
+    asyncio.run(http_client.aclose())
 
 
 # ---------------------------------------------------------------------------
@@ -602,7 +858,7 @@ def test_router_status_not_authenticated(tmp_path: Path):
         data = r.json()
         assert data["authenticated"] is False
         assert data["username"] is None
-        assert data["last_sync"] is None
+        assert data["last_import"] is None
     asyncio.run(http_client.aclose())
 
 
