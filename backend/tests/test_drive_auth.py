@@ -257,6 +257,52 @@ def test_make_cloud_backend_drive_connected(db: str):
     assert backend.access_token == "at_valid"
 
 
+def test_make_cloud_backend_auto_drive_when_connected(db: str):
+    """Tokens present, no explicit storage_backend -> DriveBackend."""
+    _set(db, "drive_root_folder_id", "folder_123")
+    _set(db, "drive_access_token", "at_valid")
+    _set(db, "drive_access_expires_at", str(time.time() + 3600))
+    _set(db, "drive_refresh_token", "rt_valid")
+
+    backend = make_cloud_backend(db)
+    assert isinstance(backend, DriveBackend)
+    assert backend.access_token == "at_valid"
+
+
+def test_make_cloud_backend_auto_local_when_unconnected(db: str, tmp_path: Path):
+    """No tokens, no explicit storage_backend -> LocalFolderBackend."""
+    root = tmp_path / "storage"
+    _set(db, "storage_local_root", str(root))
+
+    backend = make_cloud_backend(db)
+    assert isinstance(backend, LocalFolderBackend)
+    assert backend.root == root
+
+
+def test_make_cloud_backend_explicit_local_rollback(db: str, tmp_path: Path):
+    """Explicit local + tokens present -> LocalFolderBackend (rollback wins)."""
+    root = tmp_path / "storage"
+    _set(db, "storage_backend", "local")
+    _set(db, "storage_local_root", str(root))
+    _set(db, "drive_root_folder_id", "folder_123")
+    _set(db, "drive_access_token", "at_valid")
+    _set(db, "drive_access_expires_at", str(time.time() + 3600))
+    _set(db, "drive_refresh_token", "rt_valid")
+
+    backend = make_cloud_backend(db)
+    assert isinstance(backend, LocalFolderBackend)
+    assert backend.root == root
+
+
+def test_make_cloud_backend_explicit_drive_no_tokens(db: str):
+    """Explicit drive + no tokens -> None."""
+    _set(db, "storage_backend", "drive")
+    _set(db, "drive_root_folder_id", "folder_123")
+
+    backend = make_cloud_backend(db)
+    assert backend is None
+
+
 # ---------------------------------------------------------------------------
 # Tests: settings view/update
 # ---------------------------------------------------------------------------

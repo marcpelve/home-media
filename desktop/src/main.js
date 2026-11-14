@@ -2042,7 +2042,7 @@ async function doTraktSync() {
   setTimeout(loadTraktStatus, 600);
 }
 
-/* Settings: sync panel (device id, backend, drive creds, sync now) */
+/* Settings: sync panel (device, drive connect/creds, sync now) */
 async function loadSyncStatus() {
   const panel = document.getElementById("sync-panel");
   if (!panel) return;
@@ -2059,54 +2059,37 @@ async function loadSyncStatus() {
 
   let html = '<h2>Sync</h2>';
 
-  // 1. Device ID
-  html +=
-    '<p><label>Device ID </label>' +
-    '<input type="text" class="key-input" id="sync-device-id" value="' + esc(s.device_id || "") + '" autocomplete="off" spellcheck="false">' +
-    ' <button class="btn" id="sync-device-save">Save</button></p>' +
-    '<p class="trakt-msg muted" id="sync-device-msg"></p>';
+  // 1. Device (read-only: this machine's id, defaults to the Windows username)
+  html += '<p class="muted">Device: ' + esc(s.device_id || "") + '</p>';
 
-  // 2. Backend
-  const backend = s.storage_backend || "local";
-  html +=
-    '<p><label>Backend </label>' +
-    '<select id="sync-backend">' +
-    '<option value="local"' + (backend === "local" ? " selected" : "") + '>local</option>' +
-    '<option value="drive"' + (backend === "drive" ? " selected" : "") + '>drive</option>' +
-    '</select> ' +
-    '<button class="btn" id="sync-backend-save">Save</button></p>' +
-    '<p class="trakt-msg muted" id="sync-backend-msg"></p>';
-
-  // 3. Drive credentials
-  html +=
-    '<p>Drive credentials</p>' +
-    '<input type="text" class="key-input" id="sync-drive-client-id" placeholder="Drive client ID" value="' + esc(s.drive_client_id || "") + '" autocomplete="off" spellcheck="false">' +
-    '<input type="password" class="key-input" id="sync-drive-client-secret" placeholder="leave blank if already set" autocomplete="off" spellcheck="false">' +
-    '<button class="btn" id="sync-drive-creds-save">Save</button>' +
-    '<p class="trakt-msg muted" id="sync-drive-msg"></p>';
-
-  // 4. Drive status
+  // 2. Drive
+  // One-time credential setup, shown only until drive_client_id is set.
+  if (!s.drive_client_id) {
+    html +=
+      '<p class="muted">Drive credentials ' +
+      '<span class="info-tip" data-tip="OAuth credentials from your Google Cloud project. Get them at console.cloud.google.com &rarr; APIs &amp; Services &rarr; Credentials &rarr; your Desktop OAuth client &rarr; Client ID and Client Secret. You only set these once.">?</span></p>' +
+      '<input type="text" class="key-input" id="sync-drive-client-id" placeholder="Drive client ID" value="' + esc(s.drive_client_id || "") + '" autocomplete="off" spellcheck="false">' +
+      '<input type="password" class="key-input" id="sync-drive-client-secret" placeholder="leave blank if already set" autocomplete="off" spellcheck="false">' +
+      '<button class="btn" id="sync-drive-creds-save">Save</button>' +
+      '<p class="trakt-msg muted" id="sync-drive-msg"></p>';
+  }
   if (s.drive_connected) {
-    let driveLine = "Drive: connected";
+    let driveLine = "Drive: connected &check;";
     if (d && d.expires_at) {
-      driveLine += ' &mdash; token expires ' + esc(new Date(d.expires_at * 1000).toLocaleString());
+      driveLine += ' &mdash; token expires ' + new Date(d.expires_at * 1000).toLocaleString();
     }
     html += '<p class="muted">' + driveLine + '</p>';
-  } else if (d && d.pending) {
-    html += '<p class="muted">Drive: waiting for browser authorization&hellip;</p>';
   } else {
     html += '<button class="btn" id="sync-drive-connect">Connect Drive</button>' +
       '<p class="trakt-msg muted" id="sync-connect-msg"></p>';
   }
 
-  // 5. Sync now
+  // 3. Sync now + last sync info
   html +=
     '<button class="btn" id="sync-now">Sync now</button>' +
     '<p class="trakt-msg muted" id="sync-now-msg"></p>';
-
-  // 6. Last sync
   if (lastSync) {
-    let lastLine = "Last sync: " + esc(lastSync.last_sync_at || "");
+    let lastLine = "Last sync: " + (lastSync.last_sync_at ? esc(lastSync.last_sync_at) : "");
     if (lastSync.last_push_at) lastLine += " &mdash; pushed: " + esc(lastSync.last_push_at);
     if (lastSync.last_error) lastLine += " &mdash; error: " + esc(lastSync.last_error);
     html += '<p class="muted">' + lastLine + '</p>';
@@ -2115,34 +2098,7 @@ async function loadSyncStatus() {
 
   panel.innerHTML = html;
 
-  // Device ID save
-  const devSave = document.getElementById("sync-device-save");
-  if (devSave) devSave.addEventListener("click", async () => {
-    const input = document.getElementById("sync-device-id");
-    const msg = document.getElementById("sync-device-msg");
-    const val = input ? input.value.trim() : "";
-    if (!val) { if (msg) msg.textContent = "Enter a device ID first."; return; }
-    if (msg) msg.textContent = "Saving\u2026";
-    try {
-      await api("/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ device_id: val }) });
-      loadSyncStatus();
-    } catch (e) { if (msg) msg.textContent = "Save failed: " + e.message; }
-  });
-
-  // Backend save
-  const beSave = document.getElementById("sync-backend-save");
-  if (beSave) beSave.addEventListener("click", async () => {
-    const sel = document.getElementById("sync-backend");
-    const msg = document.getElementById("sync-backend-msg");
-    const val = sel ? sel.value : "local";
-    if (msg) msg.textContent = "Saving\u2026";
-    try {
-      await api("/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ storage_backend: val }) });
-      loadSyncStatus();
-    } catch (e) { if (msg) msg.textContent = "Save failed: " + e.message; }
-  });
-
-  // Drive credentials save
+  // Drive credentials save (one-time setup; block disappears once client id is set)
   const credsSave = document.getElementById("sync-drive-creds-save");
   if (credsSave) credsSave.addEventListener("click", async () => {
     const idInput = document.getElementById("sync-drive-client-id");

@@ -10,6 +10,7 @@ import sqlite3
 
 from fastapi import APIRouter, HTTPException, Request
 
+from app.drive_auth import effective_backend
 from app.sync import pending_push_count
 
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -77,7 +78,9 @@ def view(db_path: str) -> dict:
         }
 
     return {
-        "storage_backend": settings.get("storage_backend"),
+        # Report the backend actually in use (auto-selected when no explicit
+        # setting is present) so the UI shows the truth, not the raw value.
+        "storage_backend": effective_backend(settings),
         "storage_local_root": settings.get("storage_local_root"),
         "device_id": settings.get("device_id"),
         "drive_client_id": settings.get("drive_client_id"),

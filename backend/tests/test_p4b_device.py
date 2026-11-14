@@ -8,6 +8,7 @@ the user sets one.
 """
 
 import asyncio
+import os
 import sqlite3
 
 from app.db import _migrate_default_device, init_db
@@ -72,6 +73,34 @@ def test_upsert_progress_update_stamps_device(tmp_path):
     conn.commit()
     conn.close()
     upsert_progress(db, 603, 180000, 600000)
+    assert _device(db, "watch_progress", "title_id = ?", (603,)) == "pc-a"
+
+
+def test_upsert_progress_device_default_username(tmp_path, monkeypatch):
+    """No device_id setting: stamps the Windows USERNAME when present."""
+    db = tmp_path / "d.db"
+    init_db(db)
+    monkeypatch.setenv("USERNAME", "marcp")
+    upsert_progress(db, 603, 120000, 600000)
+    assert _device(db, "watch_progress", "title_id = ?", (603,)) == "marcp"
+
+
+def test_upsert_progress_device_default_fallback(tmp_path, monkeypatch):
+    """No device_id setting and no USERNAME env: falls back to 'default'."""
+    db = tmp_path / "d.db"
+    init_db(db)
+    monkeypatch.delenv("USERNAME", raising=False)
+    upsert_progress(db, 603, 120000, 600000)
+    assert _device(db, "watch_progress", "title_id = ?", (603,)) == "default"
+
+
+def test_upsert_progress_device_explicit_wins(tmp_path, monkeypatch):
+    """An explicit device_id setting beats the username fallback."""
+    db = tmp_path / "d.db"
+    init_db(db)
+    _set_device(db, "pc-a")
+    monkeypatch.setenv("USERNAME", "marcp")
+    upsert_progress(db, 603, 120000, 600000)
     assert _device(db, "watch_progress", "title_id = ?", (603,)) == "pc-a"
 
 

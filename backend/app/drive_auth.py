@@ -182,6 +182,19 @@ def get_valid_access_token(
 # Backend factory (valid token per use)
 # ---------------------------------------------------------------------------
 
+def effective_backend(settings: dict) -> str:
+    """Explicit storage_backend wins; else 'drive' when Drive tokens are
+    present, else 'local'."""
+    explicit = settings.get("storage_backend")
+    if explicit in ("local", "drive"):
+        return explicit
+    connected = bool(
+        settings.get("drive_access_token")
+        and settings.get("drive_refresh_token")
+    )
+    return "drive" if connected else "local"
+
+
 def make_cloud_backend(
     db_path: str, client: httpx.Client | None = None
 ) -> StorageBackend | None:
@@ -198,13 +211,19 @@ def make_cloud_backend(
     conn.close()
     settings = {row["key"]: row["value"] for row in rows}
 
-    if settings.get("storage_backend") == "drive":
+    # Auto-select the backend (explicit setting is the rollback lever;
+    # otherwise connection state decides) so an unconfigured peer syncs
+    # once Drive is connected.
+    eff = dict(settings)
+    eff["storage_backend"] = effective_backend(settings)
+
+    if eff["storage_backend"] == "drive":
         token = get_valid_access_token(db_path, client)
         if token is None:
             return None
-        settings["drive_access_token"] = token
+        eff["drive_access_token"] = token
 
     try:
-        return create_backend(settings)
+        return create_backend(eff)
     except (ValueError, KeyError):
         return None

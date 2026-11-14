@@ -9,6 +9,7 @@ source of truth.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from pathlib import Path
 
@@ -84,12 +85,15 @@ def _name_from_files(files: list[dict]) -> str | None:
     return None
 
 
-def _device_id(conn: sqlite3.Connection) -> str | None:
-    """This machine's device_id from settings (None when unset)."""
+def _device_id(conn: sqlite3.Connection) -> str:
+    """This machine's device_id: configured value, else the Windows
+    username, else 'default'."""
     row = conn.execute(
         "SELECT value FROM settings WHERE key = 'device_id'"
     ).fetchone()
-    return row[0] if row else None
+    if row and row[0]:
+        return row[0]
+    return os.environ.get("USERNAME", "default")
 
 
 def build_library(db_path: str) -> dict:

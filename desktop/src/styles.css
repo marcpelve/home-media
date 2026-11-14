@@ -821,3 +821,34 @@ select.focused { outline: 2px solid #fff; outline-offset: 2px; }
   z-index: 70;
 }
 .app-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* Hoverable "?" info icon: tooltip appears above on hover. */
+.info-tip {
+  display: inline-block;
+  width: 15px; height: 15px;
+  line-height: 15px;
+  text-align: center;
+  border-radius: 50%;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 10px;
+  cursor: help;
+  position: relative;
+}
+.info-tip:hover::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: 20px; left: 50%;
+  transform: translateX(-50%);
+  width: 260px;
+  padding: 8px 10px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  color: #ddd;
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: left;
+  z-index: 10;
+  white-space: normal;
+}

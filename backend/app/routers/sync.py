@@ -11,7 +11,7 @@ import sqlite3
 
 from fastapi import APIRouter, Request
 
-from app.drive_auth import make_cloud_backend
+from app.drive_auth import effective_backend, make_cloud_backend
 from app.sync import pending_push_count, sync_all_cloud
 
 router = APIRouter(prefix="/sync", tags=["sync"])
@@ -50,7 +50,9 @@ def status(request: Request) -> dict:
     row = conn.execute("SELECT * FROM sync_status").fetchone()
     conn.close()
     return {
-        "storage_backend": settings.get("storage_backend"),
+        # Effective backend (auto-selected when no explicit setting), so the
+        # status reflects what is actually in use.
+        "storage_backend": effective_backend(settings),
         "pending_count": pending_push_count(_db_path(request)),
         "last_sync": (
             {

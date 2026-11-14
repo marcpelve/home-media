@@ -6,6 +6,7 @@ The local SQLite DB owns watch progress and works fully offline. Trakt sync
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 
@@ -16,12 +17,15 @@ def _conn(db_path: str | Path) -> sqlite3.Connection:
     return conn
 
 
-def _device_id(conn: sqlite3.Connection) -> str | None:
-    """This machine's device_id from settings (None when unset)."""
+def _device_id(conn: sqlite3.Connection) -> str:
+    """This machine's device_id: configured value, else the Windows
+    username, else 'default'."""
     row = conn.execute(
         "SELECT value FROM settings WHERE key = 'device_id'"
     ).fetchone()
-    return row[0] if row else None
+    if row and row[0]:
+        return row[0]
+    return os.environ.get("USERNAME", "default")
 
 
 def upsert_progress(
