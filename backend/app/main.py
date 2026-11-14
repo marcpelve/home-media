@@ -30,6 +30,8 @@ from app.routers.library import router as library_router
 from app.routers.collection import router as collection_router
 from app.routers.config import router as config_router
 from app.routers.sync import router as sync_router
+from app.routers.drive import router as drive_router
+from app.routers.settings import router as settings_router
 
 # Load config at import; the DB path drives startup init. Secrets here are
 # only read, never logged.
@@ -163,6 +165,8 @@ app.include_router(library_router)
 app.include_router(collection_router)
 app.include_router(config_router)
 app.include_router(sync_router)
+app.include_router(drive_router)
+app.include_router(settings_router)
 
 
 @app.get("/health")
