@@ -250,6 +250,20 @@ Full design: PLAN.md. This file tracks multi-session progress.
   (fresh schema, legacy migrate+backfill, settings device_id honored,
   idempotency). 140 tests pass. Commit 08b4dda.
 
+- (2026-11-13) P-M2 (Trakt -> cloud-storage sync migration, PLAN.md S16):
+  storage adapter. `backend/app/storage.py`: versioned per-title JSON doc
+  (`build_doc`, `DOC_VERSION=1`, canonical UTC "Z" `updated_at` for LWW
+  lexicographic compare), `make_key`/`parse_key` (`"movie:603"`),
+  `StorageBackend` ABC (list/read/write/delete), `LocalFolderBackend`
+  (root/movies|shows/{tmdb_id}.json, atomic tmp+os.replace writes), and
+  `create_backend(settings)` factory (local now; drive in P-M2b).
+  `DriveBackend`: Google Drive API v3 behind the same interface — root
+  folder with movies/ + shows/ subfolders (folder-id cache), stateless
+  name-based file search, multipart create/update, alt=media reads, 4xx/5xx
+  -> RuntimeError. Two opencode runs (local model output budget): b3fc6c6
+  (core + LocalFolder + 11 tests), 5a3fe05 (Drive + in-memory-Drive
+  MockTransport tests, 7 tests). 158 tests pass.
+
 ## Session endpoint (2026-11-11) — GitHub release pipeline
 
 State: repo pushed to GitHub (`marcpelve/home-media`), branch `main`.
