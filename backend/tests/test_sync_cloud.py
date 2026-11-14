@@ -166,7 +166,7 @@ def test_pull_inserts_new_watch_row(tmp_path):
                                  device="dev-b")]
     be.write_title("movie:603", doc)
 
-    changed, errors = pull(be, db)
+    changed, errors, _remote = pull(be, db)
     assert errors == []
     assert changed == 1
 
@@ -194,7 +194,7 @@ def test_pull_lww_title_both_directions(tmp_path):
     doc = _doc(603, "The Matrix Reloaded", "2026-01-02T10:00:00Z",
                overview="new", poster_path="/new.jpg")
     be.write_title("movie:603", doc)
-    changed, errors = pull(be, db)
+    changed, errors, _remote = pull(be, db)
     assert errors == []
     assert changed >= 1
     conn = _conn(db)
@@ -215,7 +215,7 @@ def test_pull_lww_title_both_directions(tmp_path):
     conn.close()
     doc2 = _doc(603, "Doc Again", "2026-01-01T10:00:00Z", overview="stale")
     be.write_title("movie:603", doc2)
-    changed, errors = pull(be, db)
+    changed, errors, _remote = pull(be, db)
     assert errors == []
     assert changed == 0
     conn = _conn(db)
@@ -239,7 +239,7 @@ def test_pull_lww_watch_row_both_directions(tmp_path):
     doc["watch"] = [_watch_entry(9999, 100000, 1, "2026-01-02T10:00:00Z",
                                  device="dev-b")]
     be.write_title("movie:603", doc)
-    changed, errors = pull(be, db)
+    changed, errors, _remote = pull(be, db)
     assert errors == []
     assert changed == 1
     conn = _conn(db)
@@ -263,7 +263,7 @@ def test_pull_lww_watch_row_both_directions(tmp_path):
     doc2["watch"] = [_watch_entry(7777, 100000, 0, "2026-01-01T10:00:00Z",
                                   device="dev-b")]
     be.write_title("movie:603", doc2)
-    changed, errors = pull(be, db)
+    changed, errors, _remote = pull(be, db)
     assert errors == []
     assert changed == 0
     conn = _conn(db)
@@ -283,7 +283,7 @@ def test_pull_skips_unknown_title(tmp_path):
     doc["watch"] = [_watch_entry(1, 2, 0, "2026-01-02T10:00:00Z", device="dev-b")]
     be.write_title("movie:999", doc)
 
-    changed, errors = pull(be, db)
+    changed, errors, _remote = pull(be, db)
     assert errors == []
     assert changed == 0
 
@@ -321,7 +321,7 @@ def test_sync_all_cloud_converges_two_devices(tmp_path):
     assert result["pushed"] == 1
 
     # Pull into B: B gains A's watch row.
-    changed, errors = pull(be, dbB)
+    changed, errors, _remote = pull(be, dbB)
     assert errors == []
     assert changed == 1
     conn = _conn(dbB)
@@ -390,6 +390,95 @@ def test_sync_all_cloud_records_error(tmp_path):
     assert result["error"] is not None
     assert "movie:1" in result["error"]
     assert "RuntimeError" in result["error"]
+
+
+class _RecordingBackend:
+    """A dict-backed backend that records write_title calls."""
+
+    def __init__(self, remote: dict | None = None):
+        self.docs = dict(remote or {})
+        self.writes: list[str] = []
+
+    def list_titles(self):
+        return list(self.docs)
+
+    def read_title(self, key):
+        return self.docs.get(key)
+
+    def write_title(self, key, data):
+        self.docs[key] = data
+        self.writes.append(key)
+
+    def delete_title(self, key):
+        self.docs.pop(key, None)
+
+
+def _seed_remote(db, be, key) -> None:
+    """Push the local doc for *key* to *be*, then clear the write log."""
+    push_title(be, db, key)
+    be.writes.clear()
+
+
+def test_sync_all_cloud_skips_push_when_unchanged(tmp_path):
+    db = tmp_path / "d.db"
+    init_db(db)
+    _add_title(db, 603, "movie", "The Matrix", "2026-01-01 10:00:00")
+    _add_watch(db, 603, "2026-01-01 11:00:00", position_ms=1000)
+    be = _RecordingBackend()
+    _seed_remote(db, be, "movie:603")
+
+    # Local data ts == remote data ts: nothing to push.
+    result = sync_all_cloud(be, db)
+    assert result["error"] is None
+    assert result["pushed"] == 0
+    assert be.writes == []
+
+
+def test_sync_all_cloud_pushes_when_local_newer(tmp_path):
+    db = tmp_path / "d.db"
+    init_db(db)
+    _add_title(db, 603, "movie", "The Matrix", "2026-01-02 10:00:00")
+    be = _RecordingBackend()
+    # Seed the remote with a strictly OLDER doc (older title ts, no watch).
+    be.docs["movie:603"] = _doc(603, "The Matrix", "2026-01-01T10:00:00Z")
+    be.writes.clear()
+
+    result = sync_all_cloud(be, db)
+    assert result["error"] is None
+    assert result["pushed"] == 1
+    assert be.writes == ["movie:603"]
+    # The pushed doc is the local one (its data ts is strictly newer).
+    assert be.docs["movie:603"]["title"]["updated_at"] == "2026-01-02 10:00:00"
+
+
+def test_sync_all_cloud_pushes_when_remote_missing(tmp_path):
+    db = tmp_path / "d.db"
+    init_db(db)
+    _add_title(db, 603, "movie", "The Matrix", "2026-01-01 10:00:00")
+    be = _RecordingBackend()  # empty remote: self-heal must push
+
+    result = sync_all_cloud(be, db)
+    assert result["error"] is None
+    assert result["pushed"] == 1
+    assert be.writes == ["movie:603"]
+    assert be.docs["movie:603"]["title"]["title"] == "The Matrix"
+
+
+def test_sync_all_cloud_does_not_push_when_local_older(tmp_path):
+    db = tmp_path / "d.db"
+    init_db(db)
+    _add_title(db, 603, "movie", "The Matrix", "2026-01-01 10:00:00")
+    be = _RecordingBackend()
+    # Remote doc is strictly newer than the local one before the sync.
+    be.docs["movie:603"] = _doc(603, "The Matrix", "2026-01-05T10:00:00Z")
+    be.writes.clear()
+
+    # Pull absorbs the newer remote doc first, so at push time the local
+    # data ts equals the remote's: no redundant write is issued.
+    result = sync_all_cloud(be, db)
+    assert result["error"] is None
+    assert result["pushed"] == 0
+    assert be.writes == []
 
 
 # ---------------------------------------------------------------------------

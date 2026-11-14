@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable
 
 from app.storage import StorageBackend, build_doc, make_key, parse_key
@@ -288,45 +289,88 @@ def build_title_doc(conn: sqlite3.Connection, tmdb_id: int) -> dict | None:
     )
 
 
+def build_local_doc(db_path, key: str) -> dict | None:
+    """Build the doc for *key* from the local DB on its own connection.
+
+    Returns None when the title row does not exist. Thread-safe: a per-call
+    connection means parallel push workers can each build their own doc.
+    """
+    _t_type, tmdb_id = parse_key(key)
+    conn = _conn(db_path)
+    try:
+        return build_title_doc(conn, tmdb_id)
+    finally:
+        conn.close()
+
+
 def push_title(backend, db_path, key: str) -> bool:
     """Build the doc for *key* from the local DB and write it to *backend*.
 
     Returns False (and writes nothing) when the title row does not exist.
     """
-    _t_type, tmdb_id = parse_key(key)
-    conn = _conn(db_path)
-    try:
-        doc = build_title_doc(conn, tmdb_id)
-        if doc is None:
-            return False
-        backend.write_title(key, doc)
-        return True
-    finally:
-        conn.close()
+    doc = build_local_doc(db_path, key)
+    if doc is None:
+        return False
+    backend.write_title(key, doc)
+    return True
 
 
-def pull(backend, db_path) -> tuple[int, list[str]]:
+def doc_data_ts(doc: dict) -> str:
+    """The doc's data timestamp: the max (lexicographic, after normalize_ts)
+    of the title row's updated_at and every watch row's updated_at.
+
+    Deliberately NOT the doc's top-level updated_at: build_doc stamps that
+    with the build time (now_iso), which is not comparable across sides. The
+    data rows' timestamps are the LWW-relevant values. Returns "" when
+    nothing is present (sorts before any real timestamp).
+    """
+    ts: list[str] = []
+    t = doc.get("title") or {}
+    if t.get("updated_at"):
+        ts.append(normalize_ts(t["updated_at"]))
+    for w in doc.get("watch") or []:
+        if w.get("updated_at"):
+            ts.append(normalize_ts(w["updated_at"]))
+    return max(ts) if ts else ""
+
+
+def pull(backend, db_path) -> tuple[int, list[str], dict[str, dict]]:
     """Pull every stored doc and LWW-merge it into the local DB.
 
-    One bad doc must not abort the pull: a per-title exception is recorded as
-    "key: TypeName: msg" and the loop continues. Returns (rows_changed, errors).
+    Docs are read in parallel (httpx.Client is safe to share across threads);
+    the merge stays single-threaded on one connection. One bad doc must not
+    abort the pull: a per-title exception is recorded as
+    "key: TypeName: msg" and the loop continues. Returns
+    (rows_changed, errors, remote_docs) where remote_docs maps each key whose
+    doc read succeeded to its doc (keys that raised or returned None are
+    absent).
     """
+    keys = backend.list_titles()
+    remote_docs: dict[str, dict] = {}
+    errors: list[str] = []
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = pool.map(backend.read_title, keys)
+        for key in keys:
+            try:
+                doc = next(results)
+            except Exception as e:
+                errors.append(f"{key}: {type(e).__name__}: {e}")
+                continue
+            if doc is not None:
+                remote_docs[key] = doc
+
     conn = _conn(db_path)
     rows_changed = 0
-    errors: list[str] = []
     try:
-        for key in backend.list_titles():
+        for key, doc in remote_docs.items():
             try:
-                doc = backend.read_title(key)
-                if doc is None:
-                    continue
                 rows_changed += _merge_doc(conn, doc)
             except Exception as e:
                 errors.append(f"{key}: {type(e).__name__}: {e}")
         conn.commit()
     finally:
         conn.close()
-    return rows_changed, errors
+    return rows_changed, errors, remote_docs
 
 
 def _merge_doc(conn: sqlite3.Connection, doc: dict) -> int:
@@ -443,7 +487,14 @@ def pending_push_count(db_path) -> int:
 
 
 def sync_all_cloud(backend, db_path) -> dict:
-    """Pull cloud docs, push every local title, record sync status.
+    """Pull cloud docs, push the local titles that are newer (or missing
+    remotely), record sync status.
+
+    Unchanged titles are not re-pushed: a title is pushed only when its
+    remote doc is absent/unreadable (self-heal) or its data timestamp is
+    strictly newer than the remote's (see doc_data_ts). Pushes run in
+    parallel; each worker writes the doc already built for its comparison,
+    so no title is built twice.
 
     Never raises: per-title failures are recorded in "error" and the loop
     continues (a bad doc or a failed push must not stop the rest). Returns
@@ -451,8 +502,9 @@ def sync_all_cloud(backend, db_path) -> dict:
     """
     errors: list[str] = []
     pulled = 0
+    remote_docs: dict[str, dict] = {}
     try:
-        pulled, pull_errors = pull(backend, db_path)
+        pulled, pull_errors, remote_docs = pull(backend, db_path)
         errors.extend(pull_errors)
     except Exception as e:
         errors.append(f"pull: {type(e).__name__}: {e}")
@@ -465,17 +517,34 @@ def sync_all_cloud(backend, db_path) -> dict:
     finally:
         conn.close()
 
-    pushed = 0
+    # Select what to push: build each local doc once and compare its data ts
+    # against the remote's. Missing remote -> push (self-heal).
+    to_push: list[tuple[str, dict]] = []
     for t in titles:
         key = make_key(t["type"], t["tmdb_id"])
-        try:
-            if push_title(backend, db_path, key):
+        local_doc = build_local_doc(db_path, key)
+        if local_doc is None:
+            continue
+        remote = remote_docs.get(key)
+        if remote is None or doc_data_ts(local_doc) > doc_data_ts(remote):
+            to_push.append((key, local_doc))
+
+    pushed = 0
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {
+            pool.submit(backend.write_title, key, doc): key
+            for key, doc in to_push
+        }
+        for fut in as_completed(futures):
+            key = futures[fut]
+            try:
+                fut.result()
                 pushed += 1
-        except Exception as e:
-            errors.append(f"push {key}: {type(e).__name__}: {e}")
+            except Exception as e:
+                errors.append(f"push {key}: {type(e).__name__}: {e}")
 
     error = "; ".join(errors) if errors else None
-    # A full push leaves nothing pending, so pending_count is always 0 here.
+    # Everything that needed pushing was pushed, so nothing is pending.
     record_sync_status(db_path, 0, error)
     return {"pushed": pushed, "pulled": pulled, "error": error}
 
