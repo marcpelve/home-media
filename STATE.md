@@ -385,6 +385,20 @@ Full design: PLAN.md. This file tracks multi-session progress.
   Google Cloud credentials come from. Sync now + last-sync/pending
   readout kept. One opencode run: c793a28; follow-up 84ed496 makes the
   view report the effective device id too. 201 tests pass.
+- (2026-11-14) P-M4h (post-connection fixes, direct patches):
+  (a) connect-flow stuck state — while the browser OAuth is in flight the
+  Connect Drive button is disabled with a "cancel" link; cancel/timeout
+  re-render the panel clean so retrying is one click (no Refresh button).
+  (b) "sync not configured" after connecting — ROOT CAUSE: nothing ever
+  created the P-M0 sync root. complete_connect only stored tokens, but
+  DriveBackend requires drive_root_folder_id (My Drive/HomeMedia with
+  movies/ + shows/), so create_backend KeyError'd -> make_cloud_backend
+  None. Fix: drive_auth.bootstrap_drive_root finds/creates the folder
+  tree and stores the id; called from complete_connect (rolls the tokens
+  back on API failure) AND lazily from make_cloud_backend for connections
+  made before this existed, so no re-authorize is needed. 204 tests pass
+  (3 new complete_connect bootstrap tests + 1 lazy-bootstrap test,
+  shared _make_oauth_drive_handler mock).
 
 ## Session endpoint (2026-11-11) — GitHub release pipeline
 
