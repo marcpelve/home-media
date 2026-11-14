@@ -13,6 +13,7 @@ from __future__ import annotations
 import abc
 import json
 import os
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -192,6 +193,12 @@ class DriveBackend(StorageBackend):
         # Folder ids are stable for the app's lifetime; caching them spares
         # a lookup request on every title operation.
         self._folders: dict[str, str] = {}
+        # Per-subfolder file listing (subfolder id -> {name: file dict}),
+        # cached so a sync pass lists each subfolder once instead of running
+        # a Drive search per title. Guarded by _files_lock: parallel sync
+        # workers may race the first listing of a subfolder.
+        self._files_cache: dict[str, dict[str, dict]] = {}
+        self._files_lock = threading.Lock()
 
     # -- transport helpers --------------------------------------------------
 
@@ -230,14 +237,44 @@ class DriveBackend(StorageBackend):
     def _subdir_for(t_type: str) -> str:
         return "movies" if t_type == "movie" else "shows"
 
+    def _list_subfolder(self, subfolder_id: str) -> dict[str, dict]:
+        """The subfolder's files as ``{name: {"id", "name"}}``, cached.
+
+        One listing request per subfolder per backend instance: every
+        per-title operation resolves its file from this map instead of a
+        per-call Drive search. Double-checked under the lock so parallel
+        sync workers don't race a redundant first listing.
+        """
+        cached = self._files_cache.get(subfolder_id)
+        if cached is not None:
+            return cached
+        with self._files_lock:
+            cached = self._files_cache.get(subfolder_id)
+            if cached is not None:
+                return cached
+            files: dict[str, dict] = {}
+            page_token: str | None = None
+            while True:
+                q = (f"'{subfolder_id}' in parents and "
+                     f"mimeType='application/json' and trashed=false")
+                params: dict = {"q": q,
+                                "fields": "files(id,name),nextPageToken"}
+                if page_token:
+                    params["pageToken"] = page_token
+                resp = self._get("/files", params=params)
+                data = resp.json()
+                for f in data.get("files", []):
+                    files[f["name"]] = {"id": f["id"], "name": f["name"]}
+                page_token = data.get("nextPageToken")
+                if not page_token:
+                    break
+            self._files_cache[subfolder_id] = files
+            return files
+
     def _find_file(self, subfolder_id: str, stem: str) -> dict | None:
-        # Drive search is stateless: every read/write/delete re-resolves
-        # the file id by name (no local id mapping to keep in sync).
-        q = (f"'{subfolder_id}' in parents and name='{stem}.json' "
-             f"and trashed=false")
-        resp = self._get("/files", params={"q": q, "fields": "files(id,name)"})
-        files = resp.json().get("files", [])
-        return files[0] if files else None
+        # Resolve from the cached folder listing (one request per subfolder
+        # per instance) instead of a per-call Drive search.
+        return self._list_subfolder(subfolder_id).get(stem + ".json")
 
     # -- StorageBackend -------------------------------------------------------
 
@@ -245,10 +282,9 @@ class DriveBackend(StorageBackend):
         keys: list[str] = []
         for subdir, t_type in (("movies", "movie"), ("shows", "tv")):
             fid = self._subfolder(subdir)
-            q = (f"'{fid}' in parents and mimeType='application/json' "
-                 f"and trashed=false")
-            resp = self._get("/files", params={"q": q, "fields": "files(name)"})
-            for f in resp.json().get("files", []):
+            # Reuse the cached listing: no extra requests beyond the one
+            # _list_subfolder issues per subfolder.
+            for f in self._list_subfolder(fid).values():
                 stem = f["name"].rsplit(".", 1)[0]
                 try:
                     keys.append(make_key(t_type, int(stem)))
@@ -273,6 +309,10 @@ class DriveBackend(StorageBackend):
         meta: dict = {"name": name, "mimeType": "application/json",
                       "parents": [fid]}
         found = self._find_file(fid, str(tmdb_id))
+        # Invalidate the cached listing BEFORE mutating: replace-on-update
+        # (delete + create) changes the file id, so a stale entry would 404
+        # on the next read; and if the create fails, a re-list self-heals.
+        self._files_cache.pop(fid, None)
         if found is not None:
             # Update = replace. In-place content updates (PUT /files/{id})
             # are unroutable on this network (HTML 404), and the sync
@@ -313,6 +353,9 @@ class DriveBackend(StorageBackend):
         found = self._find_file(fid, str(tmdb_id))
         if found is None:
             return
+        # Invalidate the cached listing before deleting: a concurrent read
+        # must re-list and see the file gone, not the stale id.
+        self._files_cache.pop(fid, None)
         resp = self.client.delete(f"/files/{found['id']}",
                                   headers=self._headers())
         self._check(resp)

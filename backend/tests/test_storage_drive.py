@@ -90,7 +90,8 @@ class InMemoryDrive:
                 return httpx.Response(200, json={"files": files})
             # List: files under a parent with mimeType application/json.
             parent = _q_value(q, "parents")
-            files = [{"name": f["name"]} for f in self.files.values()
+            files = [{"id": fid, "name": f["name"]} for fid, f
+                     in self.files.items()
                      if f["parent"] == parent
                      and f["mimeType"] == "application/json"]
             return httpx.Response(200, json={"files": files})
@@ -225,6 +226,59 @@ def test_drive_delete(drive):
     backend.delete_title("movie:603")
     assert backend.read_title("movie:603") is None
     assert "movie:603" not in backend.list_titles()
+
+
+def _listing_count(drv: InMemoryDrive) -> int:
+    """Number of metadata file-listing requests (GET /files) so far."""
+    return sum(1 for m, p in drv.requests
+               if m == "GET" and p == "/drive/v3/files")
+
+
+def test_drive_listing_cached_between_reads(drive):
+    """A second read_title for the same key is a cache hit: it must not
+    issue another folder-listing request."""
+    backend, drv = drive["backend"], drive["drv"]
+    doc = build_doc(tmdb_id=603, type="movie", title={"title": "M"},
+                    watch=[], device=None)
+    backend.write_title("movie:603", doc)
+    before = _listing_count(drv)
+    assert backend.read_title("movie:603") == doc
+    after_first = _listing_count(drv)
+    assert backend.read_title("movie:603") == doc
+    after_second = _listing_count(drv)
+    # First read lists the subfolder once; the second is served from cache.
+    assert after_first == before + 1
+    assert after_second == after_first
+
+
+def test_drive_write_invalidates_stale_listing(drive):
+    """Replace-on-update (delete + create) changes the file id; without
+    cache invalidation the next read would use the stale id and 404."""
+    backend = drive["backend"]
+    doc1 = build_doc(tmdb_id=7, type="movie", title={"title": "A"},
+                     watch=[], device=None)
+    doc2 = build_doc(tmdb_id=7, type="movie", title={"title": "B"},
+                     watch=[], device=None)
+    backend.write_title("movie:7", doc1)
+    # Prime the cache with doc1's file id.
+    assert backend.read_title("movie:7") == doc1
+    backend.write_title("movie:7", doc2)
+    # The read must see the NEW file (new id), not the stale cached one.
+    assert backend.read_title("movie:7") == doc2
+
+
+def test_drive_delete_updates_listing(drive):
+    backend = drive["backend"]
+    for i in (11, 22):
+        backend.write_title(
+            f"movie:{i}",
+            build_doc(tmdb_id=i, type="movie", title={"title": "X"},
+                      watch=[], device=None))
+    assert set(backend.list_titles()) == {"movie:11", "movie:22"}
+    backend.delete_title("movie:11")
+    # The cached listing must reflect the removal (re-listed, not stale).
+    assert set(backend.list_titles()) == {"movie:22"}
+    assert backend.read_title("movie:11") is None
 
 
 def test_drive_4xx_raises():
