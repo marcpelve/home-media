@@ -372,6 +372,20 @@ Full design: PLAN.md. This file tracks multi-session progress.
   /sync, /sync/sync/status -> /sync/status. Nothing consumed the old paths.
   One opencode run: 9e5412f. 193 tests pass.
 
+- (2026-11-14) P-M4g (panel simplification per user critique): the P-M4f
+  panel was "horrifically ugly / over complicated". New minimal panel:
+  read-only `Device:` line (device_id now defaults to the Windows username
+  — `USERNAME` env, else 'default' — in watch.py/library.py `_device_id`),
+  no backend select (auto selection in drive_auth.effective_backend:
+  explicit storage_backend wins as the rollback lever, else 'drive' when
+  tokens present, 'local' otherwise; /settings view + /sync/status report
+  the effective value), Connect Drive button, and the credential fields
+  (client id/secret) shown only until drive_client_id is set, with a
+  hoverable "?" info icon (CSS .info-tip tooltip) explaining where the
+  Google Cloud credentials come from. Sync now + last-sync/pending
+  readout kept. One opencode run: c793a28; follow-up 84ed496 makes the
+  view report the effective device id too. 201 tests pass.
+
 ## Session endpoint (2026-11-11) — GitHub release pipeline
 
 State: repo pushed to GitHub (`marcpelve/home-media`), branch `main`.
