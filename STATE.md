@@ -335,6 +335,23 @@ Full design: PLAN.md. This file tracks multi-session progress.
   idempotency, route 401/200, status). One opencode run: f752580. 191 tests
   pass.
 
+- (2026-11-13) P-M6 (Trakt -> cloud-storage sync migration, PLAN.md S16):
+  cutover + verification. Live DB verified intact post-schema:
+  C:\Users\marcp\AppData\Local\HomeMedia\home_media.db (the installed app's
+  DB — NOT the repo-root data/home_media.db, which is a 3-title dev copy)
+  has 29 titles + 47 watch_progress rows, zero NULL device/updated_at, all
+  device='default'. (The sync_status table doesn't exist there yet — it is
+  created by init_db on the next app start from a P-M3+ build; additive.)
+  New tests/test_cutover.py (2 tests): offline writes persist (upsert_progress
+  / upsert_complete with zero cloud involvement; a ProgressPusher with a
+  None-factory survives schedule+flush; then sync_all_cloud pushes both rows
+  and the LocalFolder docs carry the state) and import->cloud (mocked Trakt
+  import lands a title + completed row; the cloud sync pushes it; the doc's
+  completed_at is the played_at string verbatim). The two-machine round-trip
+  was already covered by test_sync_cloud.py::test_sync_all_cloud_converges_
+  two_devices (real LocalFolderBackend) — not duplicated. One opencode run:
+  14ec160. 193 tests pass.
+
 ## Session endpoint (2026-11-11) — GitHub release pipeline
 
 State: repo pushed to GitHub (`marcpelve/home-media`), branch `main`.
