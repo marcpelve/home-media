@@ -8,6 +8,7 @@ import pytest
 
 from app.storage import (
     DOC_VERSION,
+    DriveBackend,
     LocalFolderBackend,
     build_doc,
     create_backend,
@@ -129,6 +130,10 @@ def test_create_backend_local(tmp_path: Path):
     assert isinstance(be2, LocalFolderBackend)
 
 
-def test_create_backend_drive_not_implemented():
-    with pytest.raises(NotImplementedError):
-        create_backend({"storage_backend": "drive"})
+def test_create_backend_drive():
+    # P-M2b: "drive" now constructs a DriveBackend (token/root from settings).
+    be = create_backend({"storage_backend": "drive",
+                         "drive_access_token": "t",
+                         "drive_root_folder_id": "root"})
+    assert isinstance(be, DriveBackend)
+    be.client.close()

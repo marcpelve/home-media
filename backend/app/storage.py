@@ -16,6 +16,8 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+import httpx
+
 DOC_VERSION = 1
 
 
@@ -156,6 +158,146 @@ class LocalFolderBackend(StorageBackend):
 
 
 # ---------------------------------------------------------------------------
+# Drive backend (Google Drive API v3)
+# ---------------------------------------------------------------------------
+
+class DriveBackend(StorageBackend):
+    """Per-title JSON on Google Drive, same layout as LocalFolderBackend:
+    a root folder containing ``movies/`` and ``shows/`` subfolders, one
+    JSON file per title (``<tmdb_id>.json``).
+
+    The root folder MUST contain both subfolders; a missing subfolder
+    raises RuntimeError on first use.
+
+    The backend takes a ready access token (the OAuth connect/refresh
+    flow is P-M4) and sends ``Authorization: Bearer <token>`` on every
+    request.
+    """
+
+    def __init__(self, access_token: str, root_folder_id: str,
+                 *, base_url: str = "https://www.googleapis.com/drive/v3",
+                 client: httpx.Client | None = None):
+        self.access_token = access_token
+        self.root_folder_id = root_folder_id
+        self.client = client if client is not None else httpx.Client(base_url=base_url)
+        # Folder ids are stable for the app's lifetime; caching them spares
+        # a lookup request on every title operation.
+        self._folders: dict[str, str] = {}
+
+    # -- transport helpers --------------------------------------------------
+
+    def _headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.access_token}"}
+
+    def _check(self, resp: httpx.Response) -> None:
+        # Surface 4xx/5xx loudly instead of swallowing: P-M4 reports sync
+        # status from this exception.
+        if resp.status_code >= 400:
+            raise RuntimeError(f"Drive API {resp.status_code}: {resp.text[:200]}")
+
+    def _get(self, path: str, *, params: dict | None = None) -> httpx.Response:
+        resp = self.client.get(path, params=params, headers=self._headers())
+        self._check(resp)
+        return resp
+
+    # -- folder + file lookups ----------------------------------------------
+
+    def _subfolder(self, name: str) -> str:
+        """Resolve (and cache) the id of the root's ``name`` subfolder."""
+        cached = self._folders.get(name)
+        if cached is not None:
+            return cached
+        q = (f"'{self.root_folder_id}' in parents and "
+             f"mimeType='application/vnd.google-apps.folder' and name='{name}'")
+        resp = self._get("/files", params={"q": q, "fields": "files(id,name)"})
+        files = resp.json().get("files", [])
+        if not files:
+            raise RuntimeError(
+                f"Drive root {self.root_folder_id!r} has no {name!r} subfolder")
+        self._folders[name] = files[0]["id"]
+        return self._folders[name]
+
+    @staticmethod
+    def _subdir_for(t_type: str) -> str:
+        return "movies" if t_type == "movie" else "shows"
+
+    def _find_file(self, subfolder_id: str, stem: str) -> dict | None:
+        # Drive search is stateless: every read/write/delete re-resolves
+        # the file id by name (no local id mapping to keep in sync).
+        q = (f"'{subfolder_id}' in parents and name='{stem}.json' "
+             f"and trashed=false")
+        resp = self._get("/files", params={"q": q, "fields": "files(id,name)"})
+        files = resp.json().get("files", [])
+        return files[0] if files else None
+
+    # -- StorageBackend -------------------------------------------------------
+
+    def list_titles(self) -> list[str]:
+        keys: list[str] = []
+        for subdir, t_type in (("movies", "movie"), ("shows", "tv")):
+            fid = self._subfolder(subdir)
+            q = (f"'{fid}' in parents and mimeType='application/json' "
+                 f"and trashed=false")
+            resp = self._get("/files", params={"q": q, "fields": "files(name)"})
+            for f in resp.json().get("files", []):
+                stem = f["name"].rsplit(".", 1)[0]
+                try:
+                    keys.append(make_key(t_type, int(stem)))
+                except ValueError:
+                    continue
+        return keys
+
+    def read_title(self, key: str) -> dict | None:
+        t_type, tmdb_id = parse_key(key)
+        fid = self._subfolder(self._subdir_for(t_type))
+        found = self._find_file(fid, str(tmdb_id))
+        if found is None:
+            return None
+        resp = self._get(f"/files/{found['id']}", params={"alt": "media"})
+        return json.loads(resp.content)
+
+    def write_title(self, key: str, data: dict) -> None:
+        t_type, tmdb_id = parse_key(key)
+        fid = self._subfolder(self._subdir_for(t_type))
+        name = f"{tmdb_id}.json"
+        content = json.dumps(data, indent=2, sort_keys=True).encode("utf-8")
+        meta: dict = {"name": name, "mimeType": "application/json"}
+        found = self._find_file(fid, str(tmdb_id))
+        # Multipart shape (metadata + media parts) is required by Drive v3
+        # for both create and update; only the metadata differs. Both parts
+        # go in ``files=`` -- a tuple in ``data=`` is expanded by httpx into
+        # repeated same-name fields, corrupting the metadata part.
+        if found is not None:
+            # Update in place; metadata without parents is fine for a PUT.
+            meta_json = json.dumps(meta)
+            resp = self.client.put(
+                f"/files/{found['id']}", headers=self._headers(),
+                files={"metadata": (None, meta_json,
+                                    "application/json; charset=UTF-8"),
+                       "media": (name, content, "application/json")})
+        else:
+            # Create: parents pins the new file under the type subfolder.
+            meta["parents"] = [fid]
+            meta_json = json.dumps(meta)
+            resp = self.client.post(
+                "/files", params={"fields": "file"}, headers=self._headers(),
+                files={"metadata": (None, meta_json,
+                                    "application/json; charset=UTF-8"),
+                       "media": (name, content, "application/json")})
+        self._check(resp)
+
+    def delete_title(self, key: str) -> None:
+        t_type, tmdb_id = parse_key(key)
+        fid = self._subfolder(self._subdir_for(t_type))
+        found = self._find_file(fid, str(tmdb_id))
+        if found is None:
+            return
+        resp = self.client.delete(f"/files/{found['id']}",
+                                  headers=self._headers())
+        self._check(resp)
+
+
+# ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
 
@@ -164,12 +306,14 @@ def create_backend(settings: dict) -> StorageBackend:
 
     ``settings["storage_backend"]`` selects the transport:
     - ``"local"`` (default) -> LocalFolderBackend
-    - ``"drive"``           -> NotImplementedError (P-M2b follow-up)
+    - ``"drive"``           -> DriveBackend (needs ``drive_access_token``
+      and ``drive_root_folder_id``; OAuth acquisition is P-M4)
     """
     backend_name = settings.get("storage_backend", "local")
     if backend_name == "local":
         root = settings.get("storage_local_root", "data/storage")
         return LocalFolderBackend(root)
     if backend_name == "drive":
-        raise NotImplementedError("Drive backend is a follow-up run (P-M2b)")
+        return DriveBackend(settings["drive_access_token"],
+                            settings["drive_root_folder_id"])
     raise ValueError(f"unknown storage_backend: {backend_name!r}")
