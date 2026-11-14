@@ -2063,16 +2063,6 @@ async function loadSyncStatus() {
   html += '<p class="muted">Device: ' + esc(s.device_id || "") + '</p>';
 
   // 2. Drive
-  // One-time credential setup, shown only until drive_client_id is set.
-  if (!s.drive_client_id) {
-    html +=
-      '<p class="muted">Drive credentials ' +
-      '<span class="info-tip" data-tip="OAuth credentials from your Google Cloud project. Get them at console.cloud.google.com &rarr; APIs &amp; Services &rarr; Credentials &rarr; your Desktop OAuth client &rarr; Client ID and Client Secret. You only set these once.">?</span></p>' +
-      '<input type="text" class="key-input" id="sync-drive-client-id" placeholder="Drive client ID" value="' + esc(s.drive_client_id || "") + '" autocomplete="off" spellcheck="false">' +
-      '<input type="password" class="key-input" id="sync-drive-client-secret" placeholder="leave blank if already set" autocomplete="off" spellcheck="false">' +
-      '<button class="btn" id="sync-drive-creds-save">Save</button>' +
-      '<p class="trakt-msg muted" id="sync-drive-msg"></p>';
-  }
   if (s.drive_connected) {
     let driveLine = "Drive: connected &check;";
     if (d && d.expires_at) {
@@ -2083,6 +2073,20 @@ async function loadSyncStatus() {
     html += '<button class="btn" id="sync-drive-connect">Connect Drive</button>' +
       '<p class="trakt-msg muted" id="sync-connect-msg"></p>';
   }
+
+  // Drive credentials: collapsible block, open by default only until the
+  // client id has been set. The link below re-opens it any time.
+  const credsOpen = !s.drive_client_id;
+  html += '<p><a href="#" id="sync-drive-creds-toggle" class="creds-toggle">Drive credentials</a></p>';
+  html +=
+    '<div id="sync-drive-creds"' + (credsOpen ? '' : ' style="display:none"') + '>' +
+    '<p class="muted">OAuth credentials ' +
+    '<span class="info-tip" data-tip="OAuth credentials from your Google Cloud project. Get them at console.cloud.google.com &rarr; APIs &amp; Services &rarr; Credentials &rarr; your Desktop OAuth client &rarr; Client ID and Client Secret. You only set these once.">?</span></p>' +
+    '<input type="text" class="key-input" id="sync-drive-client-id" placeholder="Drive client ID" value="' + esc(s.drive_client_id || "") + '" autocomplete="off" spellcheck="false">' +
+    '<input type="password" class="key-input" id="sync-drive-client-secret" placeholder="Client secret" autocomplete="off" spellcheck="false">' +
+    '<button class="btn" id="sync-drive-creds-save">Save</button>' +
+    '<p class="trakt-msg muted" id="sync-drive-msg"></p>' +
+    '</div>';
 
   // 3. Sync now + last sync info
   html +=
@@ -2098,7 +2102,16 @@ async function loadSyncStatus() {
 
   panel.innerHTML = html;
 
-  // Drive credentials save (one-time setup; block disappears once client id is set)
+  // Toggle the Drive credentials block open/closed
+  const credsToggle = document.getElementById("sync-drive-creds-toggle");
+  if (credsToggle) credsToggle.addEventListener("click", (e) => {
+    e.preventDefault();
+    const block = document.getElementById("sync-drive-creds");
+    if (block) block.style.display = block.style.display === "none" ? "" : "none";
+  });
+
+  // Drive credentials save. A blank secret keeps the stored one (partial
+  // update); a secret is required only when nothing is saved yet.
   const credsSave = document.getElementById("sync-drive-creds-save");
   if (credsSave) credsSave.addEventListener("click", async () => {
     const idInput = document.getElementById("sync-drive-client-id");
@@ -2106,7 +2119,8 @@ async function loadSyncStatus() {
     const msg = document.getElementById("sync-drive-msg");
     const cid = idInput ? idInput.value.trim() : "";
     const csec = secInput ? secInput.value.trim() : "";
-    if (!cid && !csec) { if (msg) msg.textContent = "Enter at least one field."; return; }
+    if (!cid && !csec) { if (msg) msg.textContent = "Enter the client ID and secret."; return; }
+    if (!csec && !s.drive_client_id) { if (msg) msg.textContent = "Enter the client secret."; return; }
     if (msg) msg.textContent = "Saving\u2026";
     const body = {};
     if (cid) body.drive_client_id = cid;

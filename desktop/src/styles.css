@@ -822,6 +822,14 @@ select.focused { outline: 2px solid #fff; outline-offset: 2px; }
 }
 .app-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
+/* Small underlined link that expands the Drive credentials block. */
+.creds-toggle {
+  color: var(--accent);
+  font-size: 12px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 /* Hoverable "?" info icon: tooltip appears above on hover. */
 .info-tip {
   display: inline-block;
