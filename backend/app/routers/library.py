@@ -13,6 +13,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from app import watch
+from app.sync import push_key_for
 
 router = APIRouter(prefix="/watch", tags=["library"])
 
@@ -184,9 +185,16 @@ def complete(req: CompleteRequest, request: Request):
         count = req.episode_count or 0
         for ep in range(1, count + 1):
             watch.upsert_complete(db, req.title_id, req.season, ep)
-        return {"completed": count}
-    if req.season is not None and req.episode is not None:
+    elif req.season is not None and req.episode is not None:
         watch.upsert_complete(db, req.title_id, req.season, req.episode)
-        return {"completed": 1}
-    watch.upsert_complete(db, req.title_id, None, None)
-    return {"completed": 1}
+        count = 1
+    else:
+        watch.upsert_complete(db, req.title_id, None, None)
+        count = 1
+    # Debounced cloud push: a whole-season mark is one title doc.
+    pusher = getattr(request.app.state, "pusher", None)
+    if pusher is not None:
+        key = push_key_for(db, req.title_id)
+        if key:
+            pusher.schedule(key)
+    return {"completed": count}

@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from app import watch
 from app.mpv import MpvClient, MpvError
+from app.sync import push_key_for
 
 router = APIRouter(prefix="/play", tags=["play"])
 
@@ -114,6 +115,12 @@ def save_progress(req: ProgressRequest, request: Request):
         season=req.season,
         episode=req.episode,
     )
+    # Debounced cloud push: one write per title per quiet period.
+    pusher = getattr(request.app.state, "pusher", None)
+    if pusher is not None:
+        key = push_key_for(request.app.state.db_path, req.title_id)
+        if key:
+            pusher.schedule(key)
     return row
 
 

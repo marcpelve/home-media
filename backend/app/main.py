@@ -5,6 +5,7 @@ Run with:
 """
 
 import asyncio
+import sqlite3
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -12,7 +13,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import load_config
 from app.db import init_db
-from app.sync import sync_all
+from app.storage import create_backend
+from app.sync import ProgressPusher, sync_all, sync_all_cloud
 from app.tmdb import TmdbClient
 from app.torbox import TorboxClient
 from app.downloads import DownloadManager
@@ -37,6 +39,20 @@ _config = load_config()
 # rows changed since the last push, so this stays far under Trakt's limits.
 TRAKT_SYNC_INTERVAL_S = 1800
 
+# Cloud sync cadence: full push+pull every 5 min. Only started when a
+# storage backend is configured (P-M3b).
+CLOUD_SYNC_INTERVAL_S = 300
+
+
+def _settings(db_path) -> dict:
+    """Read the settings table into a dict (empty when the table is absent)."""
+    conn = sqlite3.connect(str(db_path))
+    try:
+        rows = conn.execute("SELECT key, value FROM settings").fetchall()
+        return dict(rows)
+    finally:
+        conn.close()
+
 
 async def do_trakt_sync(app: FastAPI) -> None:
     """One best-effort sync; the local DB stays the source of truth on failure."""
@@ -50,6 +66,19 @@ async def _trakt_sync_loop(app: FastAPI) -> None:
     while True:
         await asyncio.sleep(TRAKT_SYNC_INTERVAL_S)
         await do_trakt_sync(app)
+
+
+async def _cloud_sync_loop(app: FastAPI) -> None:
+    """Periodic full cloud sync (push + pull). Only started when a backend
+    is configured; failures are logged, never fatal."""
+    while True:
+        await asyncio.sleep(CLOUD_SYNC_INTERVAL_S)
+        try:
+            await asyncio.to_thread(
+                sync_all_cloud, app.state.cloud_backend, app.state.db_path
+            )
+        except Exception:
+            pass
 
 
 @asynccontextmanager
@@ -82,7 +111,21 @@ async def lifespan(app: FastAPI):
     app.state.trakt = TraktClient(
         client_id=_config.trakt_client_id, db_path=_config.db_path
     )
+    # Cloud storage backend + debounced pusher (P-M3b). The backend is None
+    # when sync_mode is not configured, which disables cloud sync entirely.
+    try:
+        app.state.cloud_backend = create_backend(_settings(_config.db_path))
+    except ValueError:
+        app.state.cloud_backend = None
+    app.state.pusher = (
+        ProgressPusher(_config.db_path, app.state.cloud_backend)
+        if app.state.cloud_backend else None
+    )
     sync_task = asyncio.create_task(_trakt_sync_loop(app))
+    cloud_task = (
+        asyncio.create_task(_cloud_sync_loop(app))
+        if app.state.cloud_backend else None
+    )
     try:
         async with (
             app.state.tmdb_client,
@@ -92,7 +135,12 @@ async def lifespan(app: FastAPI):
         ):
             yield
     finally:
+        # Flush pending pushes before cancelling tasks so no progress is lost.
+        if app.state.pusher:
+            await app.state.pusher.flush()
         sync_task.cancel()
+        if cloud_task:
+            cloud_task.cancel()
     app.state.mpv.stop()
 
 

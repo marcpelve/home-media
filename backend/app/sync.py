@@ -8,6 +8,7 @@ Merge rule: max position_ms per item, union of completed.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 from datetime import datetime, timezone
@@ -554,3 +555,84 @@ def sync_all_cloud(backend, db_path) -> dict:
     # A full push leaves nothing pending, so pending_count is always 0 here.
     record_sync_status(db_path, 0, error)
     return {"pushed": pushed, "pulled": pulled, "error": error}
+
+
+# --- Progress push (P-M3b) --------------------------------------------------
+# Debounced per-title cloud push: local progress changes schedule a write of
+# that title's doc after a quiet period. One write per title per burst keeps
+# cloud load flat during a long viewing session.
+
+
+def push_key_for(db_path, tmdb_id: int) -> str | None:
+    """make_key for a local title, None when the title row is absent."""
+    conn = _conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT type FROM titles WHERE tmdb_id = ?", (tmdb_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        return make_key(row["type"], tmdb_id)
+    finally:
+        conn.close()
+
+
+class ProgressPusher:
+    """Debounced per-title cloud push.
+
+    Local progress changes (play position, mark-watched) schedule a push of
+    that title's doc after delay_s; a further change resets the timer, so a
+    long viewing session produces one write per title per quiet period.
+
+    The event loop is captured at init (lifespan startup, where a loop is
+    running) so schedule() can be called from FastAPI's sync thread pool.
+    """
+    def __init__(self, db_path, backend, delay_s: float = 30.0):
+        self._db_path = db_path
+        self._backend = backend
+        self._delay_s = delay_s
+        self._loop = asyncio.get_running_loop()
+        self._timers: dict[str, asyncio.TimerHandle] = {}
+        self._pending: set[str] = set()
+
+    def schedule(self, key: str) -> None:
+        old = self._timers.pop(key, None)
+        if old is not None:
+            old.cancel()
+        self._pending.add(key)
+        # Thread-safe: sync endpoints run in a pool; the timer must be
+        # created on the main loop.
+        self._loop.call_soon_threadsafe(self._set_timer, key)
+
+    def _set_timer(self, key: str) -> None:
+        self._timers[key] = self._loop.call_later(
+            self._delay_s, self._fire, key
+        )
+
+    def _fire(self, key: str) -> None:
+        self._timers.pop(key, None)
+        self._pending.discard(key)
+        try:
+            push_title(self._backend, self._db_path, key)
+        except Exception:
+            pass  # next full sync reconciles; never crash the timer
+
+    @property
+    def pending(self) -> set[str]:
+        return set(self._pending)
+
+    async def flush(self) -> int:
+        """Cancel timers and push all pending keys now (used on shutdown)."""
+        for t in list(self._timers.values()):
+            t.cancel()
+        self._timers.clear()
+        keys = sorted(self._pending)
+        self._pending.clear()
+        pushed = 0
+        for key in keys:
+            try:
+                if push_title(self._backend, self._db_path, key):
+                    pushed += 1
+            except Exception:
+                pass
+        return pushed
