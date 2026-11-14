@@ -21,6 +21,27 @@ import httpx
 
 DOC_VERSION = 1
 
+# ---------------------------------------------------------------------------
+# Per-title writer locks (process-wide)
+# ---------------------------------------------------------------------------
+
+# A debounced progress push and a manual sync each use their OWN
+# DriveBackend instance (the factory builds a fresh one for token
+# freshness), so instance-level state — e.g. the listing cache — cannot
+# serialize them. Drive's index is eventually consistent, so an
+# interleaved replace (find -> delete -> create) can resolve an id that a
+# concurrent writer already deleted (404) and leave two same-name files
+# behind. A process-wide lock per storage key serializes the whole
+# replace for that title.
+_WRITER_LOCKS: dict[str, threading.Lock] = {}
+_WRITER_LOCKS_GUARD = threading.Lock()
+
+
+def _writer_lock(key: str) -> threading.Lock:
+    """Per-key writer lock shared across all backend instances."""
+    with _WRITER_LOCKS_GUARD:
+        return _WRITER_LOCKS.setdefault(key, threading.Lock())
+
 
 # ---------------------------------------------------------------------------
 # Key helpers
@@ -308,19 +329,34 @@ class DriveBackend(StorageBackend):
         content = json.dumps(data, indent=2, sort_keys=True).encode("utf-8")
         meta: dict = {"name": name, "mimeType": "application/json",
                       "parents": [fid]}
-        found = self._find_file(fid, str(tmdb_id))
-        # Invalidate the cached listing BEFORE mutating: replace-on-update
-        # (delete + create) changes the file id, so a stale entry would 404
-        # on the next read; and if the create fails, a re-list self-heals.
-        self._files_cache.pop(fid, None)
-        if found is not None:
-            # Update = replace. In-place content updates (PUT /files/{id})
-            # are unroutable on this network (HTML 404), and the sync
-            # pushes every local title each run, so deleting the old file
-            # before creating the new one is self-healing. Lookup is
-            # name-based, so the id swap is invisible.
-            self._delete_file(found["id"])
-        self._resumable_create(meta, content)
+        # Serialize the whole replace (find + delete + create) per title:
+        # a concurrent writer on a separate backend instance (progress
+        # push vs manual sync) could otherwise delete the id we resolved,
+        # 404 on ours, and leave two same-name files behind.
+        with _writer_lock(key):
+            found = self._find_file(fid, str(tmdb_id))
+            # Invalidate the cached listing BEFORE mutating: replace-on-
+            # update (delete + create) changes the file id, so a stale
+            # entry would 404 on the next read; and if the create fails,
+            # a re-list self-heals.
+            self._files_cache.pop(fid, None)
+            if found is not None:
+                # Update = replace. In-place content updates (PUT
+                # /files/{id}) are unroutable on this network (HTML 404),
+                # and the sync pushes every local title each run, so
+                # deleting the old file before creating the new one is
+                # self-healing. Lookup is name-based, so the id swap is
+                # invisible.
+                try:
+                    self._delete_file(found["id"])
+                except RuntimeError as e:
+                    # 404 = the old version is already gone (a concurrent
+                    # writer, or an out-of-band delete, removed it) —
+                    # which is the state we wanted after the delete.
+                    # Anything else is a real failure.
+                    if "404" not in str(e):
+                        raise
+            self._resumable_create(meta, content)
 
     def _delete_file(self, fid: str) -> None:
         resp = self.client.delete(f"/files/{fid}", headers=self._headers())

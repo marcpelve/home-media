@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 
 import httpx
 import pytest
@@ -39,6 +40,7 @@ class InMemoryDrive:
     def __init__(self):
         self.files: dict[str, dict] = {}
         self._seq = 0
+        self._lock = threading.Lock()
         self.post_count = 0
         self.put_count = 0
         self.requests: list[tuple[str, str]] = []  # (method, raw path)
@@ -48,6 +50,7 @@ class InMemoryDrive:
                                "parent": ROOT, "content": b""}
 
     def _next_id(self) -> str:
+        # Called only from _handle, which already holds self._lock.
         self._seq += 1
         return f"file-{self._seq}"
 
@@ -59,6 +62,13 @@ class InMemoryDrive:
                      f"?uploadType=resumable&upload_id={fid}"})
 
     def handler(self, request: httpx.Request) -> httpx.Response:
+        # The whole handler runs under the lock: every branch reads and
+        # mutates the same dicts, and the race test drives it from
+        # several threads at once.
+        with self._lock:
+            return self._handle(request)
+
+    def _handle(self, request: httpx.Request) -> httpx.Response:
         self.requests.append((request.method, request.url.path))
         # request.url.path includes the base_url path; strip it to get the
         # Drive API route ("/files", "/files/<id>"). Uploads arrive on the
@@ -143,7 +153,7 @@ def drive():
     backend = DriveBackend(TOKEN, ROOT, client=client,
                            upload_client=upload_client)
     yield {"backend": backend, "drv": drv, "client": client,
-           "upload_client": upload_client}
+           "upload_client": upload_client, "transport": transport}
     client.close()
     upload_client.close()
 
@@ -279,6 +289,71 @@ def test_drive_delete_updates_listing(drive):
     # The cached listing must reflect the removal (re-listed, not stale).
     assert set(backend.list_titles()) == {"movie:22"}
     assert backend.read_title("movie:11") is None
+
+
+def test_drive_write_tolerates_stale_delete_404(drive):
+    """A 404 on the replace's delete means the old version is already gone
+    (a concurrent writer, or an out-of-band delete, removed it). The
+    write must proceed and leave exactly one file with the new content."""
+    backend, drv = drive["backend"], drive["drv"]
+    doc1 = build_doc(tmdb_id=9, type="movie", title={"title": "A"},
+                     watch=[], device=None)
+    doc2 = build_doc(tmdb_id=9, type="movie", title={"title": "B"},
+                     watch=[], device=None)
+    backend.write_title("movie:9", doc1)
+    # Prime the listing cache with the current file id...
+    assert backend.read_title("movie:9") == doc1
+    cached_id = next(fid for fid, f in drv.files.items()
+                    if f["name"] == "9.json")
+    # ...then remove the file out-of-band (a concurrent writer's delete).
+    del drv.files[cached_id]
+    # The next write resolves the stale id from the cache and its delete
+    # 404s — which must be tolerated, not fatal.
+    backend.write_title("movie:9", doc2)
+    assert backend.read_title("movie:9") == doc2
+    stored = [f for f in drv.files.values() if f["name"] == "9.json"]
+    assert len(stored) == 1
+
+
+def test_drive_concurrent_writes_same_key_one_file(drive):
+    """The live bug: a debounced progress push and a manual sync each run
+    on their own DriveBackend instance (fresh token), so their listing
+    caches can't serialize them. Two concurrent replaces of the same
+    title must end with exactly ONE file, and neither write may raise."""
+    drv = drive["drv"]
+    # A second backend instance on the SAME drive (its own clients).
+    client2 = httpx.Client(base_url=BASE_URL, transport=drive["transport"])
+    upload2 = httpx.Client(base_url=UPLOAD_BASE_URL, transport=drive["transport"])
+    backend2 = DriveBackend(TOKEN, ROOT, client=client2, upload_client=upload2)
+    docA = build_doc(tmdb_id=13, type="movie", title={"title": "A"},
+                     watch=[], device=None)
+    docB = build_doc(tmdb_id=13, type="movie", title={"title": "B"},
+                     watch=[], device=None)
+    barrier = threading.Barrier(2)
+    errors: list[BaseException] = []
+
+    def w(backend, doc):
+        try:
+            barrier.wait()
+            backend.write_title("movie:13", doc)
+        except BaseException as e:  # noqa: BLE001 — report, don't swallow
+            errors.append(e)
+
+    t1 = threading.Thread(target=w, args=(drive["backend"], docA))
+    t2 = threading.Thread(target=w, args=(backend2, docB))
+    t1.start(); t2.start()
+    t1.join(); t2.join()
+    client2.close()
+    upload2.close()
+    assert not errors, f"concurrent writes raised: {errors}"
+    stored = [f for f in drv.files.values() if f["name"] == "13.json"]
+    assert len(stored) == 1, f"concurrent replaces left {len(stored)} files"
+    # The survivor holds one of the two docs (whichever replace ran last).
+    # (Read the drive directly: each backend's listing cache is
+    # per-instance, so a cross-instance read could see a stale map.)
+    content = stored[0]["content"].decode("utf-8")
+    assert content in (json.dumps(docA, indent=2, sort_keys=True),
+                       json.dumps(docB, indent=2, sort_keys=True))
 
 
 def test_drive_4xx_raises():
