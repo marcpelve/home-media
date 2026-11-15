@@ -1,68 +1,58 @@
 # Project Handoff: home-media
 
-**Date:** 2026-11-14 06:45
+**Date:** 2026-11-15 14:10
 **Branch:** main
-**Latest commit:** 6fd6c48 (version: 0.2.0 — cloud storage sync migration)
+**Latest commit:** 3ea42bf (Bump version to 0.2.1)
 
 ## Done
-- Cloud storage sync migration complete (P-M0–P-M7): Trakt ongoing sync
-  removed (demoted to one-time import), Google Drive is the sync backend
-  (per-title versioned JSON under `My Drive/HomeMedia/{movies,shows}/`).
-- P-M4i: Drive upload fixes — resumable-upload protocol for creates;
-  updates use replace (delete + create) because in-place `PUT /files/{id}`
-  is unroutable on this network (HTML 404, curl-confirmed).
-- P-M4j: sync speed — push only changed titles (data-ts LWW comparison),
-  parallel pull/push (8 workers), per-subfolder listing cache. Unchanged
-  sync: ~2s / 0 writes (was ~70s / 30 writes).
-- P-M4k: concurrent-replace race fix — process-wide per-title writer lock
-  serializes find+delete+create across backend instances (progress push
-  vs manual sync); a 404 on the replace's delete is tolerated.
-- v0.2.0 released: tag pushed, GitHub workflow built + signed + published
-  (installer, .sig files, updater zip, latest.json). Release verified,
-  updater manifest checked (version 0.2.0, signed).
-- Pre-push secrets scan: all 47 pushed commits (diffs + full history
-  incl. deletions) and the full tree are clean; only `.env.example`
-  (placeholders) carries credential names.
-- 214/214 backend tests pass.
+- Fixed `resolve()` to add cached-but-missing torrents to the Torbox account
+  via magnet, then re-search with 3x2s retry (commit `4e084d2`).
+- Added frontend guards: alert + return false when `download_url` is missing
+  in both `pickSource` and `pickSourceDownload`.
+- Fixed `_safe_name()` in `downloads.py` to strip torrent directory components
+  (`Path(filename).name`) — torrent file paths like `Show.S01/Show.S01E01.mkv`
+  were creating non-existent subdirectories, causing all downloads to fail at 0%.
+- Added "Failed" section to the Downloads UI: shows failed downloads with
+  individual Remove buttons and a "Clear all" button (commit `abd0015`).
+- Player: simplified controls to Stop-only, fixed time separator,
+  added download speed indicator (MB/s) (commit `8c843d5`).
+- Bumped version to 0.2.1 (commit `3ea42bf`).
+- Pushed to main, created GitHub release v0.2.1 with NSIS installer asset.
 
 ## Current state
-- main == origin/main (fully pushed). Release run 43566163396 succeeded.
-- Release: https://github.com/marcpelve/home-media/releases/tag/v0.2.0
-- Local app running (port 8790) on the 0.2.0 build; Drive sync clean
-  (30 titles, last_error None).
-- Untracked local file: `desktop/src-tauri/build-tauri.bat` (MSVC toolchain
-  helper for local builds; the CI workflow does NOT use it). Decide whether
-  to commit or gitignore it.
+- main == origin/main (fully pushed). v0.2.1 released.
+- Release: https://github.com/marcpelve/home-media/releases/tag/v0.2.1
+- 214/214 backend tests passing (as of `8c843d5`; not re-run after `abd0015`).
+- Untracked: `desktop/src-tauri/build.log` (build artifact).
+- `desktop/src-tauri/build-tauri.bat` still untracked (MSVC helper, CI doesn't use it).
 
 ## Blockers
 - None.
 
 ## Next steps
-1. Test the in-app updater on a real install: install 0.1.7, check for
-   update -> should find 0.2.0 via latest.json (updater path untested
-   end-to-end since v0.1.0).
-2. Decide the fate of `desktop/src-tauri/build-tauri.bat` (commit vs
-   gitignore).
-3. HANDOFF.md commit is local — push with the next explicit push.
+1. Test the v0.2.1 installer: verify downloads work end-to-end and the
+   failed-downloads UI shows/clears old attempts.
+2. Run `pytest tests/ -x -q` to confirm 214/214 after `abd0015`.
+3. Decide the fate of `desktop/src-tauri/build-tauri.bat` (commit vs gitignore).
 
 ## Key decisions
-- Replace-on-update (delete + create) for Drive writes: in-place content
-  updates are environmentally broken on this network; safe because sync
-  pushes all titles (self-healing) and lookup is name-based (id swap
-  invisible).
-- Per-title writer lock is process-wide (module-level), keyed by storage
-  key: the factory builds a fresh backend per call (token freshness), so
-  instance state can't serialize writers.
-- Selective push compares data ts = max(title row, watch rows)
-  `updated_at` — NOT the doc's top-level stamp (build time).
-- Rollback levels: L1 `storage_backend='local'`; L2 + delete Drive creds
-  from the local DB settings; L3 `git revert` the migration commits.
+- `_safe_name` strips directory components from torrent file paths: the
+  Torbox API returns `files[].name` as a full relative path including the
+  torrent's folder structure; only the leaf filename is needed for the
+  local downloads dir.
+- `resolve()` adds missing torrents via magnet then retries: some cached
+  sources are not yet in the Torbox account; the old code only searched
+  existing torrents and returned empty, causing 422s on the download endpoint.
+- Frontend guards use `alert()` + `return false`: prevents silent failures
+  when a source can't produce a download URL (e.g. uncached source).
+- Player controls reduced to Stop-only: mpv has its own keyboard shortcuts
+  (space=play/pause, left/right=seek); the in-app buttons were redundant.
 
 ## References
-- STATE.md — full phase log through P-M4k.
-- Key commits: 7e9a3b9 (listing cache), c0ae6a2 (selective + parallel
-  sync), 32c5cac (writer lock), 6fd6c48 (version).
+- Key commits: `4e084d2` (resolve fix), `8c843d5` (player + speed),
+  `abd0015` (download path + failed UI), `3ea42bf` (version bump).
 - Local DB: `%LOCALAPPDATA%\HomeMedia\home_media.db` (settings table holds
-  Drive/TMDB/Torbox credentials — never commit or print values).
-- Release workflow: `.github/workflows/release.yml` (tag `v*.*.*` trigger;
-  needs repo secret TAURI_SIGNING_PRIVATE_KEY, already set).
+  Torbox/TMDB/Drive credentials — never commit or print values).
+- Release workflow: `.github/workflows/release.yml` (tag `v*.*.*` trigger).
+- Build: `cd desktop/src-tauri && cmd.exe /c build-tauri.bat`.
+- PyInstaller: `cd backend && .venv/Scripts/python -m PyInstaller backend.spec --clean -y`.
