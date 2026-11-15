@@ -8,6 +8,7 @@ directory defaults to Config.download_dir (or ./downloads).
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -31,6 +32,7 @@ class DownloadManager:
         self._client = client
         self._owns_client = client is None
         self._tasks: dict[int, asyncio.Task] = {}
+        self._speeds: dict[int, float] = {}
 
     async def __aenter__(self) -> "DownloadManager":
         if self._client is None:
@@ -115,15 +117,19 @@ class DownloadManager:
         conn = get_db(self._db_path)
         try:
             rows = conn.execute("SELECT * FROM downloads ORDER BY id").fetchall()
-            return [dict(r) for r in rows]
+            result = [dict(r) for r in rows]
         finally:
             conn.close()
+        for d in result:
+            d["speed"] = self._speeds.get(d["id"])
+        return result
 
     def cancel(self, dl_id: int) -> None:
         t = self._tasks.get(dl_id)
         if t:
             t.cancel()
         self._db_update(dl_id, status="failed")
+        self._speeds.pop(dl_id, None)
 
     def remove(self, dl_id: int) -> bool:
         t = self._tasks.get(dl_id)
@@ -142,6 +148,7 @@ class DownloadManager:
             conn.commit()
         finally:
             conn.close()
+        self._speeds.pop(dl_id, None)
         return True
 
     def _ids_for(self, title_id: int, episode: int | None) -> list[int]:
@@ -216,16 +223,26 @@ class DownloadManager:
                 written = offset if resp.status_code == 206 else 0
 
                 with open(dest, mode) as f:
+                    last_speed_time = time.monotonic()
+                    last_speed_bytes = 0
                     async for chunk in resp.aiter_bytes(65536):
                         f.write(chunk)
                         written += len(chunk)
+                        last_speed_bytes += len(chunk)
                         if total:
                             self._db_update(dl_id, progress=min(1.0, written / total))
+                        elapsed = time.monotonic() - last_speed_time
+                        if elapsed >= 1.0:
+                            self._speeds[dl_id] = last_speed_bytes / elapsed
+                            last_speed_time = time.monotonic()
+                            last_speed_bytes = 0
 
             self._db_update(
                 dl_id, status="done", progress=1.0, completed_at=self._now()
             )
+            self._speeds.pop(dl_id, None)
         except Exception:
             self._db_update(dl_id, status="failed")
+            self._speeds.pop(dl_id, None)
         finally:
             self._tasks.pop(dl_id, None)

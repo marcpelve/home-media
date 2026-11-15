@@ -885,7 +885,9 @@ async function refreshDownloads(list, empty) {
     const item = el("div", "dl-item");
     const top = el("div", "dl-item-top");
     top.appendChild(el("span", "dl-name", name));
-    top.appendChild(el("span", "dl-pct", d.status === "queued" ? "Queued" : pct + "%"));
+    let pctText = d.status === "queued" ? "Queued" : pct + "%";
+    if (d.status === "downloading" && d.speed) pctText += " " + fmtSpeed(d.speed);
+    top.appendChild(el("span", "dl-pct", pctText));
     item.appendChild(top);
     const track = el("div", "dl-progress-track");
     const bar = el("div", "dl-progress");
@@ -1579,31 +1581,19 @@ function renderNowPlaying(d, source, season, episode) {
 
   const times = el("div", "np-times");
   const cur = el("span", null, "0:00");
+  const sep = el("span", null, " / ");
   const dur = el("span", null, "0:00");
   times.appendChild(cur);
+  times.appendChild(sep);
   times.appendChild(dur);
   wrap.appendChild(times);
 
   const controls = el("div", "np-controls");
-  const pauseBtn = el("button", "btn", "Pause");
-  const resumeBtn = el("button", "btn", "Resume");
-  const backBtn = el("button", "btn btn-ghost", "-10s");
-  const fwdBtn = el("button", "btn btn-ghost", "+10s");
   const quitBtn = el("button", "btn btn-danger", "Stop");
-  for (const b of [pauseBtn, resumeBtn, backBtn, fwdBtn, quitBtn]) controls.appendChild(b);
+  controls.appendChild(quitBtn);
   wrap.appendChild(controls);
   app.appendChild(wrap);
 
-  pauseBtn.addEventListener("click", () => api("/play/pause", { method: "POST" }));
-  resumeBtn.addEventListener("click", () => api("/play/resume", { method: "POST" }));
-  backBtn.addEventListener("click", async () => {
-    const p = await api("/play/position");
-    await api("/play/seek", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ seconds: Math.max(0, (p.time_pos || 0) - 10) }) });
-  });
-  fwdBtn.addEventListener("click", async () => {
-    const p = await api("/play/position");
-    await api("/play/seek", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ seconds: (p.time_pos || 0) + 10 }) });
-  });
   quitBtn.addEventListener("click", async () => {
     stopPlayPoll();
     nowPlaying = null;
@@ -1934,6 +1924,13 @@ function fmtBytes(n) {
   let i = -1;
   do { n /= 1024; i++; } while (n >= 1024 && i < units.length - 1);
   return n.toFixed(n < 10 ? 1 : 0) + " " + units[i];
+}
+
+function fmtSpeed(bytesPerSec) {
+  if (bytesPerSec == null) return "";
+  if (bytesPerSec >= 1024 * 1024) return (bytesPerSec / (1024 * 1024)).toFixed(1) + " MB/s";
+  if (bytesPerSec >= 1024) return (bytesPerSec / 1024).toFixed(0) + " KB/s";
+  return bytesPerSec.toFixed(0) + " B/s";
 }
 
 async function loadCacheStatus() {
