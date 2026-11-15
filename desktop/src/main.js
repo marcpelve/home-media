@@ -1447,6 +1447,10 @@ async function pickSource(d, source, seasonSel, episodeSel, mode) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ hash: source.hash }),
     });
+    if (!resolved.download_url) {
+      alert("Could not get a stream link for this source. Try a cached source.");
+      return false;
+    }
     const label = (source.title || d.title || d.name) + (episode ? ` S${season}E${episode}` : "");
     const start = await savedStartSeconds(d.id, season, episode);
     await api("/play", {
@@ -1479,6 +1483,10 @@ async function pickSourceDownload(d, source, season, episode) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ hash: source.hash }),
     });
+    if (!resolved.download_url) {
+      alert("Could not get a download link for this source. Try a cached source.");
+      return false;
+    }
     const target = (resolved.files && resolved.files[0]) || {};
     await api("/downloads", {
       method: "POST",

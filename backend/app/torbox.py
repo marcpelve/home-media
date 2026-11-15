@@ -252,21 +252,43 @@ class TorboxClient:
     # -- high-level resolve --------------------------------------------------
 
     async def resolve(self, hash: str) -> dict:
-        """Resolve a hash to debrid status + our account's torrent/files."""
+        """Resolve a hash to debrid status + our account's torrent/files.
+
+        When the hash is cached on the debrid but not yet in our account,
+        it is added via its magnet link so a download URL can be issued.
+        """
         cached = await self.check_cached(hash)
         result = {"hash": hash, "cached": cached, "torrent_id": None, "files": []}
-        if cached:
-            torrent = await self.find_in_account(hash)
-            if torrent:
-                result["torrent_id"] = torrent.get("id")
-                result["files"] = [
-                    {
-                        "file_id": f.get("id"),
-                        "name": f.get("name"),
-                        "size": f.get("size"),
-                        "mimetype": f.get("mimetype"),
-                    }
-                    for f in (torrent.get("files") or [])
-                    if isinstance(f, dict)
-                ]
+        if not cached:
+            return result
+
+        torrent = await self.find_in_account(hash)
+        if not torrent:
+            # Cached on the debrid but absent from our account — add it.
+            magnet = f"magnet:?xt=urn:btih:{hash}"
+            try:
+                await self.add_to_account(magnet)
+                # The create response lacks `files`, so re-search the
+                # account for the full torrent object.  The API needs a
+                # moment to register the new entry.
+                for _ in range(3):
+                    await asyncio.sleep(2)
+                    torrent = await self.find_in_account(hash)
+                    if torrent:
+                        break
+            except Exception:
+                pass
+
+        if torrent:
+            result["torrent_id"] = torrent.get("id")
+            result["files"] = [
+                {
+                    "file_id": f.get("id"),
+                    "name": f.get("name"),
+                    "size": f.get("size"),
+                    "mimetype": f.get("mimetype"),
+                }
+                for f in (torrent.get("files") or [])
+                if isinstance(f, dict)
+            ]
         return result
