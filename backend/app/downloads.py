@@ -186,7 +186,9 @@ class DownloadManager:
     @staticmethod
     def _safe_name(filename: str | None, file_url: str) -> str:
         if filename:
-            return filename
+            # Torrent file paths include directory components
+            # (e.g. "Show.S01/Show.S01E01.mkv") — keep only the leaf.
+            return Path(filename).name
         name = Path(urlparse(file_url).path).name
         return name or "download"
 

@@ -852,32 +852,38 @@ async function renderDownloads() {
   app.innerHTML = "";
   const wrap = el("div", "downloads-view");
   wrap.appendChild(el("h1", null, "Downloads"));
-  wrap.appendChild(el("p", "muted", "Active downloads. Finished items appear in your Library."));
-  const list = el("div", "dl-list");
-  wrap.appendChild(list);
-  const empty = el("p", "muted dl-empty", "No active downloads.");
-  empty.style.display = "none";
-  wrap.appendChild(empty);
+  const activeList = el("div", "dl-list");
+  wrap.appendChild(activeList);
+  const activeEmpty = el("p", "muted dl-empty", "No active downloads.");
+  activeEmpty.style.display = "none";
+  wrap.appendChild(activeEmpty);
+  const failedHeader = el("h2", "dl-failed-header", "Failed");
+  failedHeader.style.display = "none";
+  wrap.appendChild(failedHeader);
+  const failedList = el("div", "dl-list");
+  wrap.appendChild(failedList);
   app.appendChild(wrap);
-  await refreshDownloads(list, empty);
+  await refreshDownloads(activeList, activeEmpty, failedList, failedHeader);
   if (dlPollTimer) clearInterval(dlPollTimer);
-  dlPollTimer = setInterval(() => refreshDownloads(list, empty), 3000);
+  dlPollTimer = setInterval(() => refreshDownloads(activeList, activeEmpty, failedList, failedHeader), 3000);
   window.scrollTo(0, 0);
 }
 
-async function refreshDownloads(list, empty) {
+async function refreshDownloads(activeList, activeEmpty, failedList, failedHeader) {
   let data;
   try {
     data = await api("/downloads");
   } catch (e) {
     return;
   }
-  const active = (data.downloads || []).filter(
-    (d) => d.status === "queued" || d.status === "downloading"
-  );
+  const all = data.downloads || [];
+  const active = all.filter((d) => d.status === "queued" || d.status === "downloading");
+  const failed = all.filter((d) => d.status === "failed");
   updateDlBadge(active.length);
-  list.innerHTML = "";
-  empty.style.display = active.length ? "none" : "";
+
+  // Active section
+  activeList.innerHTML = "";
+  activeEmpty.style.display = active.length ? "none" : "";
   for (const d of active) {
     const name = d.file_path ? String(d.file_path).split(/[\\/]/).pop()
       : `Title #${d.title_id}${d.episode != null ? " E" + d.episode : ""}`;
@@ -901,7 +907,7 @@ async function refreshDownloads(list, empty) {
       cancel.disabled = true;
       try {
         await api("/downloads/" + d.id, { method: "DELETE" });
-        await refreshDownloads(list, empty);
+        await refreshDownloads(activeList, activeEmpty, failedList, failedHeader);
       } catch (e) {
         alert("Could not cancel: " + e.message);
         cancel.disabled = false;
@@ -909,7 +915,47 @@ async function refreshDownloads(list, empty) {
     });
     foot.appendChild(cancel);
     item.appendChild(foot);
-    list.appendChild(item);
+    activeList.appendChild(item);
+  }
+
+  // Failed section
+  failedList.innerHTML = "";
+  failedHeader.style.display = failed.length ? "" : "none";
+  if (failed.length) {
+    const clearAll = el("button", "btn btn-ghost dl-clear-all", "Clear all");
+    clearAll.addEventListener("click", async () => {
+      clearAll.disabled = true;
+      for (const d of failed) {
+        try { await api("/downloads/" + d.id, { method: "DELETE" }); } catch (e) { /* best-effort */ }
+      }
+      await refreshDownloads(activeList, activeEmpty, failedList, failedHeader);
+    });
+    failedHeader.appendChild(clearAll);
+  }
+  for (const d of failed) {
+    const name = d.file_path ? String(d.file_path).split(/[\\/]/).pop()
+      : `Title #${d.title_id}${d.episode != null ? " E" + d.episode : ""}`;
+    const item = el("div", "dl-item dl-item-failed");
+    const top = el("div", "dl-item-top");
+    top.appendChild(el("span", "dl-name", name));
+    top.appendChild(el("span", "dl-pct", "Failed"));
+    item.appendChild(top);
+    const foot = el("div", "dl-item-foot");
+    foot.appendChild(el("span", "dl-size", d.size_bytes ? fmtBytes(d.size_bytes) : ""));
+    const remove = el("button", "btn btn-ghost dl-cancel", "Remove");
+    remove.addEventListener("click", async () => {
+      remove.disabled = true;
+      try {
+        await api("/downloads/" + d.id, { method: "DELETE" });
+        await refreshDownloads(activeList, activeEmpty, failedList, failedHeader);
+      } catch (e) {
+        alert("Could not remove: " + e.message);
+        remove.disabled = false;
+      }
+    });
+    foot.appendChild(remove);
+    item.appendChild(foot);
+    failedList.appendChild(item);
   }
 }
 
