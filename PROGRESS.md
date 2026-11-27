@@ -1,9 +1,9 @@
 # home-media - Progress Tracker
 
 Lightweight native Windows media app to replace Kodi.
-Design: PLAN.md  ·  Detailed log: STATE.md  ·  This file: live phase progress.
+Design: PLAN.md  ·  Detailed log: STATE.md  ·  Latest handoff: HANDOFF.md  ·  This file: phase checklist.
 
-**8 / 9 phases done - P7 (packaging) complete pending clean-machine installer run; offline library + TMDB/Torbox in-app auth built**
+**All build phases done. Current release: v0.2.1 (2026-11-15). Remaining: clean-machine installer run + end-to-end updater test.**
 
 ## Phases
 
@@ -13,75 +13,58 @@ Design: PLAN.md  ·  Detailed log: STATE.md  ·  This file: live phase progress.
 - [x] P2   Cocoscrapers source-finding (standalone)
 - [x] P3   Torbox debrid resolve + downloads
 - [x] P4   mpv playback (JSON-IPC + watch progress)
-- [x] P5   Trakt sync (device flow + PKCE, local fallback)
-- [x] P6   Frontend (browse, search, detail, picker, playback, Trakt panel, keyboard nav)
-- [-] P7   Packaging  <- all buildable work done; only clean-machine run remains
+- [x] P5   Trakt (device flow) - now a one-time history import (see S16 below)
+- [x] P6   Frontend (browse, search, detail, picker, playback, settings, keyboard nav)
+- [x] P7   Packaging (PyInstaller one-dir sidecar, NSIS installer, signed updater)
+- [x] S16  Cloud-storage sync migration (Trakt sync -> Google Drive), P-M0..P-M7
 
-## P7 - Packaging (complete pending clean-machine run)
+## Releases
 
-- [x] PyInstaller backend `home-media.exe` (one-DIR, windowed) - fast startup (~0s)
-- [x] Packaging-aware config (exe-relative `.env`, `data/`, `mpv.exe` when frozen)
-- [x] Portable layout verified: `home-media.exe` + `.env` + `data/` (Trakt + cache load)
-- [x] Tauri sidecar wired (`resources/home-media` folder, spawn on launch / kill on close)
-- [x] Frontend `dist/` built for bundling
-- [x] Frontend startup grace (polls /health, "Starting" state, Retry button)
-- [x] Tauri app + Windows installer built (MSI + NSIS) - **rebuilt from current
-  sources 2026-11-10** (prior installers were stale: predated the offline library)
-- [x] Backend tests green (111 pass) - fixed a stale TMDB search fixture
-- [ ] Installer verified on a clean machine (needs the user - see STATE.md handoff)
+- [x] v0.1.0 (2026-11-11) - first GitHub release, NSIS installer only
+- [x] v0.2.0 (2026-11-14) - cloud-storage sync; CI built + signed + published
+      installer, .sig files, updater zip and latest.json
+- [x] v0.2.1 (2026-11-15) - Torbox resolve fix, download path fix, Failed
+      downloads UI, Stop-only player with download speed
 
-## Offline library - browse + play downloaded content with no internet
+## Cloud-storage sync (PLAN.md S16) - complete
 
-- [x] Phase A: persist title metadata to `titles` on first sight (`/tmdb/title` upsert)
-- [x] Phase B: DB-direct `/library` + `/library/file` endpoints (no TMDB calls)
-- [x] Phase C: frontend Library screen (grid -> title detail -> episodes + Play)
-- [x] Phase D: home "My Library" row (`Promise.allSettled`, offline-safe)
-- [x] Phase E: empty/error states, honest episode labels
+- [x] P-M1 `device` column + idempotent backfill
+- [x] P-M2 storage adapter: per-title JSON docs, LocalFolderBackend + DriveBackend
+- [x] P-M3 sync engine: LWW pull/push, debounced ProgressPusher, 5-min loop
+- [x] P-M4 Drive OAuth + settings API; minimal Sync panel (P-M4f/g)
+- [x] P-M4h-k live fixes: root-folder bootstrap, resumable uploads,
+      replace-on-update, selective parallel sync (~2s idle), per-title writer lock
+- [x] P-M5 one-time Trakt import (ongoing Trakt sync dropped)
+- [x] P-M6 cutover verification tests
+- [x] P-M7 rollback runbook (PLAN.md S16)
 
-## In-app auth - TMDB + Torbox keys in the settings view
+## Offline library + downloads
 
-- [x] TmdbClient + TorboxClient: settings-table key (set/get/clear), per-request Bearer, .env fallback, `validate()`
-- [x] Endpoints: `GET /tmdb/status` + `POST|DELETE /tmdb/auth`, `GET /sources/status` + `POST|DELETE /sources/auth`
-- [x] Frontend settings panels (key input + Save + "get a key" link; Connected + Remove)
-- [x] 12 new tests (123 total pass)
+- [x] Title metadata persisted to `titles` on first sight
+- [x] DB-direct `/library` endpoints (no TMDB calls) + Library screen + home row
+- [x] Watch / Download toggle in the source picker
+- [x] Downloads screen: active (progress, speed, cancel) + Failed (remove, clear all)
 
-## Hover/scroll guard - pointer-moved discriminator (Kodi-style)
+## Settings + auth
 
-- [x] pointerMoved flag (mousemove) + 120ms scroll lock; hover only re-focuses on a real pointer move
-- [x] Home rows: card mouseenter guard (breaks the scroll-induced re-hover loop)
-- [x] Episode grid: same guard on card mouseenter (after card.focus())
-- [x] Browser-verified home + episode: real move focuses, scroll-induced ignored, re-arm works
+- [x] TMDB + Torbox keys in-app (validated, stored in the settings table, .env fallback)
+- [x] Trakt sign-in + Import from Trakt
+- [x] Drive Connect + Sync now + last-sync / pending readout
+- [x] Service-health dots in the top bar, poster-cache readout + clear, update check
 
-## Service health UI - "set your key" messaging + 503 degradation
+## Security
 
-- [x] Backend: TMDB data endpoints return `503 "TMDB not configured"` (not raw 500) when no token
-- [x] Frontend: top-bar status cluster - one amber dot per unconfigured service; empty when all healthy
-- [x] Pure-CSS hover tooltip: service name + message + "Open Settings" (jumps to the panel)
-- [x] Home: contextual "set your TMDB key" note when TMDB is unconfigured
-- [x] Refresh hooks on key save/remove + Trakt sign-in/out
-- [x] 1 new test (124 total pass)
-- [x] Dots slow-blink (2.4s pulse; pauses on hover; reduced-motion safe)
+- [x] Secrets gitignored, never logged; backend bound to 127.0.0.1
+- [x] Browser-origin allowlist: CORS limited to the Tauri webview + local dev
+      origins; requests with a foreign Origin get 403
 
-## Next steps (corrected 2026-11-10 — verified against the code)
+## Open
 
-- [ ] 1. Clean-machine installer run (needs the user — see STATE.md handoff)
-
-Done this session (Settings polish):
-- [x] Poster-cache size readout + Clear-cache button (GET /config,
-      POST /config/clear-cache)
-- [x] Download dir → <app>/data/downloads; posters → <app>/data/posters
-      (decoupled from downloads)
-- Dropped: quality-pref (source picker surfaces quality/DV/HDR) and
-      TMDB reviews (user declined)
-
-Tabled (pending the user's own testing):
-- [ ] Download-to-library UI (Download button in detail + Downloads screen;
-      backend ready, frontend not wired)
-- [ ] My Library end-to-end testing
-
-Resolved since the prior handoff: source-picker quality sorting (done in
-coco_driver.py: 4K>1080p, DV>HDR>no-HDR, seeders/size, MIN_QUALITY_RANK=1080p)
-and the opencode version regression (binary now reports 2.2.7).
+- [ ] Clean-machine installer run (needs the user - see STATE.md handoff)
+- [ ] In-app updater tested end-to-end (install older build -> update)
+- [ ] Test v0.2.1 downloads end-to-end + failed-downloads UI (HANDOFF.md)
+- [ ] Re-run the full backend suite after `abd0015` (and with test_cors.py)
+- [ ] Known: intermittent ctypes access violation when seeking during playback (mpv.py)
 
 ## Legend
 

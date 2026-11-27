@@ -5,7 +5,10 @@ Netflix-style browsing, Cocoscrapers source-finding, Torbox resolve + offline
 download, mpv playback, Trakt tracking with a local source-of-truth fallback.
 Targets: 2 Windows machines.
 
-Status: DESIGN (review) - no code yet.
+Status: BUILT. P0-P7 done and the S16 cloud-sync migration is complete;
+released through v0.2.1 (2026-11-15). Live progress: STATE.md / HANDOFF.md.
+Sections below are the original design; "As built" notes mark where the
+implementation differs.
 
 ------------------------------------------------------------------------
 ## 1. Goals
@@ -41,7 +44,10 @@ Status: DESIGN (review) - no code yet.
 
 - Frontend: Tauri (Rust + system webview) + React + Tailwind. One small native
   .exe per machine, native window, spawns/controls the local backend + mpv.
-- Backend: Python 3.11, FastAPI (async), SQLite (stdlib sqlite3). Runs as a
+  As built: Tauri v2 with a vanilla JS/CSS frontend (desktop/src/, no
+  framework or bundler) - lighter, and nothing needed React. The backend
+  (not the shell) spawns mpv.
+- Backend: Python 3.11 (as built: 3.14 on the dev box, 3.12 in CI), FastAPI (async), SQLite (stdlib sqlite3). Runs as a
   local service bound to 127.0.0.1.
 - Scrape: Cocoscrapers (standalone, see S8.4) -> best {hash, magnet, quality,
   size, seeders}.
@@ -50,6 +56,8 @@ Status: DESIGN (review) - no code yet.
 - Playback: mpv over JSON IPC (local socket). Plays a URL (online) or a local
   file path (offline).
 - Track/sync: Trakt API (OAuth) + local DB source of truth.
+  As built: superseded by S16 - Google Drive per-title files + local DB;
+  Trakt is a one-time history import.
 - Browse/metadata: TMDB (v3 API key) for posters, titles, years, genres,
   trending, search, reviews.
 
@@ -78,6 +86,11 @@ Offline play: same as above but step 5 uses requestdl to download the .mkv to
 disk first (download manager), then step 6 plays the local file.
 
 ## 6. Repository layout
+
+As built: the frontend lives in desktop/ (src/ = index.html, main.js,
+styles.css; src-tauri/ = Rust shell), not frontend/. The backend also has
+storage.py, drive_auth.py, library.py, config.py and routers/. Also
+PROGRESS.md, HANDOFF.md and .github/workflows/release.yml at the root.
 
   home-media/
     PLAN.md                 this file
@@ -265,6 +278,11 @@ ranked list of {hash, magnet, quality, size, seeders} without Kodi installed.
 
 ## 9. Backend API surface (local FastAPI, 127.0.0.1 only)
 
+As built: routes are grouped by router without an /api prefix - /tmdb,
+/sources (scrape + resolve + Torbox auth), /downloads, /play, /watch,
+/library, /trakt (auth, status, import), /sync, /drive, /settings,
+/config, /health. The original sketch:
+
   GET  /api/titles/{type}/trending
   GET  /api/titles/continue-watching
   GET  /api/titles/library
@@ -297,7 +315,8 @@ ranked list of {hash, magnet, quality, size, seeders} without Kodi installed.
   prefs, cache size.
 
 Styling: dark Netflix-like theme, Tailwind, poster rows with hover scale,
-keyboard + mouse nav.
+keyboard + mouse nav. (As built: hand-written CSS, no Tailwind; plus a
+Library screen for offline content and a 10-foot keyboard focus layer.)
 
 ## 11. Config & secrets
 
@@ -314,6 +333,11 @@ keyboard + mouse nav.
 
 - Secrets local-only, gitignored, not logged.
 - Backend loopback-only.
+- Browser-origin allowlist: loopback alone doesn't stop a web page in a
+  local browser from calling 127.0.0.1. CORS allows only the Tauri webview
+  (tauri://localhost, http(s)://tauri.localhost) and local dev origins, and
+  a middleware returns 403 for any request carrying a foreign Origin (CORS
+  by itself would still let 'simple' POSTs execute).
 - mpv child process; IPC over a local socket (not network).
 - Vendor Cocoscrapers read-only; no exec of untrusted input.
 

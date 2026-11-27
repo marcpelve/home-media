@@ -460,7 +460,34 @@ Full design: PLAN.md. This file tracks multi-session progress.
   movie:687163 (the bug's title) — both succeeded, exactly one file,
   doc content unchanged. App sync after: 2.1s / 0 pushes / no error.
 
+- (2026-11-14) v0.2.0 released (commit 6fd6c48): cloud-storage sync
+  migration shipped. Tag push -> release.yml built, signed and published the
+  NSIS installer, .sig files, updater zip and latest.json; manifest checked
+  (version 0.2.0, signed). Pre-push secrets scan of all pushed commits and
+  the full tree was clean. 214 tests pass.
+- (2026-11-15) v0.2.1 released (commit 3ea42bf). Torbox resolve now adds
+  cached-but-not-yet-added torrents via magnet and retries 3x2s (4e084d2);
+  frontend guards a missing download_url. downloads.py `_safe_name` strips
+  torrent directory components (paths like Show.S01/Show.S01E01.mkv made
+  every download fail at 0%); Downloads screen gained a Failed section with
+  Remove + Clear all (abd0015). Player reduced to Stop-only (mpv's own keys
+  handle pause/seek), time separator fixed, download speed shown (8c843d5).
+  build-tauri.bat is now committed (8c843d5). Details: HANDOFF.md.
+- (2026-11-27) Security: CORS no longer a wildcard. The API is loopback-
+  only, but any page in a local browser could still call 127.0.0.1:8790
+  (change settings, start playback, trigger a sync). main.py now allows only
+  the Tauri webview (tauri://localhost, http(s)://tauri.localhost) and
+  localhost/127.0.0.1 dev origins, and a middleware returns 403 for any
+  request with a foreign Origin header (CORS alone still lets "simple"
+  body-less POSTs execute). Requests without an Origin (CLI, tests, the Drive
+  OAuth callback navigation, poster <img> loads) are unaffected. New
+  tests/test_cors.py. Not yet run on the dev box. Also refreshed stale docs
+  (README, AGENTS, PLAN as-built notes, PROGRESS, this file).
+
 ## Session endpoint (2026-11-11) — GitHub release pipeline
+
+RESOLVED by v0.2.0 (2026-11-14): the workflow now builds, signs and
+publishes the installer + updater artifacts + latest.json. Kept for history.
 
 State: repo pushed to GitHub (`marcpelve/home-media`), branch `main`.
 `v0.1.0` release is live with the NSIS installer (`.exe` only — no updater
@@ -530,7 +557,7 @@ dev tools) and verify:
 Expected: clean install -> app launches to home -> closing the window kills
 the backend (port 8790 released).
 
-## Session endpoint (2026-11-10) — pick back up here
+## Session endpoint (2026-11-10) — superseded (see HANDOFF.md for the latest)
 State: clean working tree. All servers spun down; unauthed test stack torn
 down; scratch dir removed. 130/130 backend tests pass. dist/ synced with
 src/.
@@ -555,9 +582,8 @@ Done this session (Settings polish):
   and TMDB reviews (user declined).
 
 Tabled (pending the user's own testing):
-- Download-to-library UI — Download button in the detail view + a Downloads
-  screen (progress / cancel / open-folder). Backend is ready
-  (POST/GET/DELETE /downloads); the frontend is not wired yet.
+- (DONE since) Download-to-library UI — Watch/Download toggle in the source
+  picker + a Downloads screen (progress, speed, cancel, Failed section).
 - My Library end-to-end testing.
 
 Resolved since the prior handoff:
@@ -567,7 +593,7 @@ Resolved since the prior handoff:
 - opencode version regression: gone — the installed binary reports 2.2.7.
 
 ## Decisions
-- TMDB auth: v4 Read Access Token via `Authorization: *** header (not the v3
+- TMDB auth: v4 Read Access Token via an `Authorization: Bearer <token>` header (not the v3
   query-param key). Identical access, keeps the secret out of URLs, never
   expires. Cache TMDB data < 6 months (their terms).
 - Local SQLite = source of truth for watch/library/downloads. Trakt = sync
