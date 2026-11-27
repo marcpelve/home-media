@@ -1,58 +1,47 @@
 # Project Handoff: home-media
 
-**Date:** 2026-11-15 14:10
-**Branch:** main
-**Latest commit:** 3ea42bf (Bump version to 0.2.1)
+**Date:** 2026-11-27
+**Branch:** fix/cors-and-docs (from main @ 916bf07, v0.2.1)
 
 ## Done
-- Fixed `resolve()` to add cached-but-missing torrents to the Torbox account
-  via magnet, then re-search with 3x2s retry (commit `4e084d2`).
-- Added frontend guards: alert + return false when `download_url` is missing
-  in both `pickSource` and `pickSourceDownload`.
-- Fixed `_safe_name()` in `downloads.py` to strip torrent directory components
-  (`Path(filename).name`) — torrent file paths like `Show.S01/Show.S01E01.mkv`
-  were creating non-existent subdirectories, causing all downloads to fail at 0%.
-- Added "Failed" section to the Downloads UI: shows failed downloads with
-  individual Remove buttons and a "Clear all" button (commit `abd0015`).
-- Player: simplified controls to Stop-only, fixed time separator,
-  added download speed indicator (MB/s) (commit `8c843d5`).
-- Bumped version to 0.2.1 (commit `3ea42bf`).
-- Pushed to main, created GitHub release v0.2.1 with NSIS installer asset.
+- CORS locked down (backend/app/main.py). The wildcard is gone: CORS allows only
+  `tauri://localhost`, `http(s)://tauri.localhost` (the Tauri v2 webview) and
+  `http(s)://localhost|127.0.0.1[:port]` (dev servers). A new
+  `reject_foreign_origins` middleware returns 403 for any request whose
+  Origin header is not on that list. Without it, CORS would still let
+  body-less "simple" POSTs from any web page run. Requests with no Origin are unaffected.
+- New `backend/tests/test_cors.py` covers the allowed origins, the refused ones
+  (look-alike hosts, `null`), a foreign POST /play/quit blocked, no-Origin
+  requests, and the webview preflight.
+- Refreshed the stale docs: README (Drive sync, one-time Trakt import, desktop/
+  layout), AGENTS (desktop/ not frontend/, Python versions, origin allowlist
+  rule, the piratebay.py exception), PLAN (status + "As built" notes), PROGRESS
+  (rewritten to current state), STATE (v0.2.0 / v0.2.1 / CORS entries,
+  resolved sections marked).
 
-## Current state
-- main == origin/main (fully pushed). v0.2.1 released.
-- Release: https://github.com/marcpelve/home-media/releases/tag/v0.2.1
-- 214/214 backend tests passing (as of `8c843d5`; not re-run after `abd0015`).
-- Untracked: `desktop/src-tauri/build.log` (build artifact).
-- `desktop/src-tauri/build-tauri.bat` still untracked (MSVC helper, CI doesn't use it).
+## Verify before merging
+1. Run the full suite on the dev box:
+   `backend/.venv/Scripts/python -m pytest backend/tests -q`
+   (test_cors.py has NOT been run yet - it was written in an environment
+   without FastAPI).
+2. Launch the installed or dev build and confirm the app still loads data. If the
+   webview's origin is something other than `http://tauri.localhost`, every
+   request will 403. In that case, check DevTools -> Network for the Origin
+   header and add it to `ALLOWED_ORIGINS`.
+3. Connect Drive once (or re-run Sync now) to confirm the OAuth callback still works.
 
-## Blockers
-- None.
+## Next steps (carried over)
+1. Test the v0.2.1 installer: downloads end-to-end and the Failed-downloads UI.
+2. Clean-machine installer run + in-app updater end-to-end test.
+3. Optional hardening: a Host-header check (127.0.0.1 / localhost) to block
+   DNS-rebinding. It needs "testserver" allowed for TestClient.
 
-## Next steps
-1. Test the v0.2.1 installer: verify downloads work end-to-end and the
-   failed-downloads UI shows/clears old attempts.
-2. Run `pytest tests/ -x -q` to confirm 214/214 after `abd0015`.
-3. Decide the fate of `desktop/src-tauri/build-tauri.bat` (commit vs gitignore).
-
-## Key decisions
-- `_safe_name` strips directory components from torrent file paths: the
-  Torbox API returns `files[].name` as a full relative path including the
-  torrent's folder structure; only the leaf filename is needed for the
-  local downloads dir.
-- `resolve()` adds missing torrents via magnet then retries: some cached
-  sources are not yet in the Torbox account; the old code only searched
-  existing torrents and returned empty, causing 422s on the download endpoint.
-- Frontend guards use `alert()` + `return false`: prevents silent failures
-  when a source can't produce a download URL (e.g. uncached source).
-- Player controls reduced to Stop-only: mpv has its own keyboard shortcuts
-  (space=play/pause, left/right=seek); the in-app buttons were redundant.
+## Resolved since the last handoff
+- `desktop/src-tauri/build-tauri.bat` is committed (it landed in 8c843d5).
 
 ## References
-- Key commits: `4e084d2` (resolve fix), `8c843d5` (player + speed),
-  `abd0015` (download path + failed UI), `3ea42bf` (version bump).
-- Local DB: `%LOCALAPPDATA%\HomeMedia\home_media.db` (settings table holds
-  Torbox/TMDB/Drive credentials — never commit or print values).
-- Release workflow: `.github/workflows/release.yml` (tag `v*.*.*` trigger).
+- Local DB: `%LOCALAPPDATA%\HomeMedia\home_media.db` (the settings table holds
+  Torbox/TMDB/Drive credentials, so never commit or print the values).
+- Release: push a `v*.*.*` tag, and `.github/workflows/release.yml` builds, signs and publishes.
 - Build: `cd desktop/src-tauri && cmd.exe /c build-tauri.bat`.
 - PyInstaller: `cd backend && .venv/Scripts/python -m PyInstaller backend.spec --clean -y`.

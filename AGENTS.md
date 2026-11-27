@@ -6,19 +6,25 @@ Rules and orientation for AI-assisted work in this repo. Read this first.
 A lightweight native Windows media app to replace Kodi. Tauri frontend (thin
 native shell) + Python/FastAPI backend (the brain). The backend does: TMDB
 metadata, Cocoscrapers source-finding, Torbox resolve + offline download,
-mpv playback, Trakt tracking with a local SQLite source of truth.
+mpv playback, watch tracking with a local SQLite source of truth synced
+across machines via Google Drive (Trakt is a one-time history import).
 
-Full design: PLAN.md. Live multi-session state: STATE.md.
+Full design: PLAN.md. Detailed log: STATE.md. Latest handoff: HANDOFF.md.
 
 ## Layout
 - backend/    Python FastAPI app (the brain). Entry: backend/app/main.py
-- frontend/   Tauri + React + Tailwind (native shell) - built in P0b
-- data/       runtime: SQLite DB, caches, downloads (gitignored)
+- desktop/    Tauri v2 native shell. Frontend is vanilla JS/CSS/HTML in
+              desktop/src/ (main.js, no framework, no bundler);
+              `npm run build` copies src/ -> dist/. Rust shell (sidecar
+              spawn/kill, updater) in desktop/src-tauri/src/lib.rs.
+- data/       runtime (dev): SQLite DB, caches, downloads (gitignored).
+              The installed app uses %LOCALAPPDATA%\HomeMedia instead.
 - backend/.env  secrets - gitignored. NEVER commit, NEVER print, NEVER sync.
+- .github/workflows/release.yml  tag `v*.*.*` -> build, sign, publish.
 
 ## Python
-- Python 3.14 (only version on this box; the plan said 3.11 - 3.14 works for
-  our stack). Venv lives at backend/.venv.
+- Python 3.14 on this box (the plan said 3.11); CI builds with 3.12. Both
+  work for our stack. Venv lives at backend/.venv.
 - Create venv:   py -3.14 -m venv backend/.venv
 - Install deps:  backend/.venv/Scripts/pip install -r backend/requirements.txt
 - Run backend:   from backend/ ->  .venv/Scripts/python -m uvicorn app.main:app --host 127.0.0.1 --port 8790
@@ -31,10 +37,18 @@ Full design: PLAN.md. Live multi-session state: STATE.md.
 ## Edit-scope rules
 - One task = one git worktree. Never edit in the primary checkout
   (C:\ai\repos\home-media). Work in your assigned worktree directory.
-- backend/ changes stay in backend/; frontend/ in frontend/.
-- Do NOT touch backend/.env. Do NOT add secrets to any tracked file.
-- Cocoscrapers (once vendored under backend/app/coco/) is READ-ONLY. Adapt
-  it via kodi_stub.py - never edit the library's own files.
+- backend/ changes stay in backend/; frontend changes in desktop/.
+- Do NOT touch backend/.env. Do NOT add secrets to any tracked file. The
+  installed app keeps TMDB/Torbox/Drive credentials in the DB settings
+  table - never print those values either.
+- Cocoscrapers (vendored under backend/app/coco/) is READ-ONLY. Adapt it via
+  kodi_stub.py - never edit the library's own files. One deliberate
+  exception exists: the piratebay.py shadowed-import fix (commit 88b0242);
+  re-apply it if the vendored copy is ever refreshed.
+- The API only accepts browser requests from the Tauri webview and local
+  dev origins (ALLOWED_ORIGINS / ALLOWED_ORIGIN_REGEX in backend/app/main.py;
+  anything else gets 403). If the frontend's origin changes, update that
+  allowlist - never go back to a wildcard.
 - The orchestrator (Hermes) owns AGENTS.md, STATE.md, README.md, PLAN.md.
   A delegated coding task should not rewrite those.
 

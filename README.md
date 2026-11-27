@@ -7,15 +7,18 @@ A lightweight native Windows media app to replace Kodi.
 - One-click play: Cocoscrapers source-finding + Torbox resolution
 - Offline: download a title to local disk for offline playback
 - Playback: mpv (JSON IPC)
-- Tracking: Trakt sync across devices, with a local SQLite source of truth
-  so it keeps working offline / without auth
+- Tracking: a local SQLite source of truth on each machine, synced across
+  machines through per-title files in Google Drive (`My Drive/HomeMedia/`).
+  Works fully offline; changes push when the connection returns.
+- Trakt: optional one-time import of your existing watch history.
 
-Stack: Tauri (Rust + system webview) frontend, Python/FastAPI + SQLite
-backend.
+Stack: Tauri v2 shell (Rust + system webview) with a vanilla-JS frontend in
+`desktop/`, Python/FastAPI + SQLite backend in `backend/`.
 
-## Trakt sign-in
+## Trakt sign-in (for the one-time history import)
 
-Trakt sync is optional; the app works without it. To sign in (first time,
+Trakt is optional; the app works without it. It is only used to import your
+past watch history (Settings -> Import from Trakt). To sign in (first time,
 re-auth, or on a new machine), run:
 
     .venv/Scripts/python backend/trakt_auth.py
@@ -26,4 +29,6 @@ comes from `backend/.env` (`TRAKT_CLIENT_ID`). Re-run the command any time you
 need to sign in again.
 
 See `PLAN.md` for the full design and phased build plan.
-See `STATE.md` for live progress. See `AGENTS.md` for working conventions.
+See `STATE.md` for the detailed log, `PROGRESS.md` for the phase checklist,
+`HANDOFF.md` for the latest session handoff, and `AGENTS.md` for working
+conventions.

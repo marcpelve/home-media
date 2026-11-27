@@ -6,10 +6,12 @@ Run with:
 
 import asyncio
 import logging
+import re
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.config import load_config
 from app.db import init_db
@@ -136,14 +138,53 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="home-media", lifespan=lifespan)
-# The desktop webview loads from a local origin and fetches this API
-# cross-origin, so allow it. The server is bound to 127.0.0.1 only.
+
+# Browser origins allowed to call this API. The server binds 127.0.0.1 only,
+# but that does NOT stop a web page open in any browser on this machine from
+# sending requests to 127.0.0.1:8790 - with a wildcard, any site could change
+# settings, start playback or trigger a sync. Only the Tauri webview and
+# local dev servers are trusted.
+ALLOWED_ORIGINS = [
+    "tauri://localhost",  # Tauri v2 on macOS/Linux
+    "http://tauri.localhost",  # Tauri v2 on Windows (WebView2, the default)
+    "https://tauri.localhost",  # Windows with useHttpsScheme enabled
+]
+# Local dev servers (serve_nocache.py on :8791, the Tauri devUrl :5173, the
+# backend's own pages on :8790). Any process on this machine can already
+# reach the port directly, so trusting local origins adds no exposure.
+ALLOWED_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+_ALLOWED_ORIGIN_RE = re.compile(ALLOWED_ORIGIN_REGEX)
+
+
+def origin_allowed(origin: str) -> bool:
+    return origin in ALLOWED_ORIGINS or bool(_ALLOWED_ORIGIN_RE.match(origin))
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=ALLOWED_ORIGIN_REGEX,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Registered after CORSMiddleware, so it runs first (outermost).
+@app.middleware("http")
+async def reject_foreign_origins(request: Request, call_next):
+    # CORS alone only stops a foreign page from READING responses: "simple"
+    # cross-origin requests (e.g. a body-less POST /sync or /play/quit) are
+    # still delivered and executed. Browsers attach Origin to every
+    # cross-origin request, so refuse any request whose Origin is not ours.
+    # Requests with no Origin header - CLI tools (trakt_auth.py), tests,
+    # top-level navigations such as the Drive OAuth callback, <img> poster
+    # loads - are unaffected.
+    origin = request.headers.get("origin")
+    if origin is not None and not origin_allowed(origin):
+        return JSONResponse({"detail": "origin not allowed"}, status_code=403)
+    return await call_next(request)
+
+
 app.include_router(tmdb_router)
 app.include_router(torbox_router)
 app.include_router(sources_router)
